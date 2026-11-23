@@ -7,6 +7,7 @@
 //   lua-literal.k  LUA-LITERAL  decoding numerals and string literals
 //   lua-config.k   LUA-CONFIG   the configuration; tables, locals, output, errors
 //   lua-eval.k     LUA-EVAL     expressions and statements
+//   lua-function.k LUA-FUNCTION closures, calls, returns, varargs, generic for
 //   lua-stdlib.k   LUA-STDLIB   the global table and library functions
 
 requires "lua-stdlib.k"

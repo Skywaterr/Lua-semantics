@@ -11,6 +11,8 @@ module LUA-CONFIG
   // <env>     Name |-> Loc for the locals in scope
   // <store>   Loc |-> Val; upvalues (M3) share a Loc
   // <fenv>    the current function environment: the table globals live in
+  // <varargs> the current function's `...` values
+  // <funcs>   Id |-> #fun(...) for every closure created (see LUA-FUNCTION)
   // <epoch>   bumped whenever a local may outlive its block (closure
   //           creation, coroutine switches); see #restoreEnv in LUA-EVAL
   // <tables>  Id |-> Map of fields (Val |-> Val, no nil values)
@@ -22,11 +24,14 @@ module LUA-CONFIG
       <k> #init ~> #chunk($PGM:Block) </k>
       <env> .Map </env>
       <fenv> tref(0) </fenv>
+      <varargs> .List </varargs>
       <store> .Map </store>
       <nextLoc> 0 </nextLoc>
       <epoch> 0 </epoch>
       <tables> .Map </tables>
       <nextTable> 0 </nextTable>
+      <funcs> .Map </funcs>
+      <nextFn> 0 </nextFn>
       <args> $ARGS:String </args>
       <output stream="stdout"> .List </output>
       <errors> .List </errors>

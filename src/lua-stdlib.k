@@ -1,11 +1,11 @@
 // The standard library: the initial global table and library functions.
-// M2 covers print, io.write, tostring, tonumber, type and _VERSION; the
-// rest arrives with later milestones (see ROADMAP.md).
+// So far: print, io.write, tostring, tonumber, type, select, unpack and
+// _VERSION; the rest arrives with later milestones (see ROADMAP.md).
 
-requires "lua-eval.k"
+requires "lua-function.k"
 
 module LUA-STDLIB
-  imports LUA-EVAL
+  imports LUA-FUNCTION
 
   // Table 0 is _G, table 1 is io.
   rule <k> #init => .K ...</k>
@@ -20,9 +20,11 @@ module LUA-STDLIB
          "_VERSION" |-> "Lua 5.1"
          "io"       |-> tref(1)
          "print"    |-> builtin("print")
+         "select"   |-> builtin("select")
          "tonumber" |-> builtin("tonumber")
          "tostring" |-> builtin("tostring")
          "type"     |-> builtin("type")
+         "unpack"   |-> builtin("unpack")
 
   // ------------------------------------------------------------ tostring
   // Addresses are made up (they differ between runs in lua too).
@@ -34,6 +36,7 @@ module LUA-STDLIB
   rule #tostr(S:String)   => S
   rule #tostr(tref(I))    => "table: 0x" +String #hex8(I +Int 1)
   rule #tostr(builtin(N)) => "function: builtin: " +String N
+  rule #tostr(closure(I)) => "function: 0x" +String #hex8(I +Int 268435457)
 
   syntax String ::= #hex8(Int) [function, total]
   rule #hex8(I) => #rep("0", 8 -Int lengthString(Base2String(I, 16))) +String Base2String(I, 16)
@@ -67,4 +70,45 @@ module LUA-STDLIB
   rule <k> #apply(builtin("tonumber"), ListItem(V:Val) ListItem(10.0)) => #vals(ListItem(#tonumber(V))) ...</k>
   rule <k> #apply(builtin(N), .List) => #error("bad argument #1 to '" +String N +String "' (value expected)") ...</k>
     requires N ==String "type" orBool N ==String "tostring" orBool N ==String "tonumber"
+
+  // -------------------------------------------------------------- select
+  // select('#', ...) counts; select(n, ...) returns the arguments from the
+  // n-th on, counting from the end if n < 0 (lbaselib.c luaB_select).
+  syntax KItem ::= #select(Val, List)
+  rule <k> #apply(builtin("select"), ListItem(S:String) Rest) => #vals(ListItem(Int2Float(size(Rest), 53, 11))) ...</k>
+    requires #startsWith(S, "#")
+  rule <k> #apply(builtin("select"), ListItem(N:Val) Rest) => #select(#tonumber(N), Rest) ...</k>
+    requires notBool (isString(N) andBool #startsWith({N}:>String, "#"))
+  rule <k> #apply(builtin("select"), .List) => #error("bad argument #1 to 'select' (number expected, got no value)") ...</k>
+  rule <k> #select(F:Float, Rest) => #vals(#drop(#selectIndex(#truncInt(F), size(Rest) +Int 1) -Int 1, Rest)) ...</k>
+    requires #selectIndex(#truncInt(F), size(Rest) +Int 1) >=Int 1
+  rule <k> #select(_:Float, _) => #error("bad argument #1 to 'select' (index out of range)") ...</k> [owise]
+  rule <k> #select(nil, _) => #error("bad argument #1 to 'select' (number expected)") ...</k>
+
+  syntax Int ::= #selectIndex(Int, Int) [function, total]
+  rule #selectIndex(I, N) => N +Int I requires I <Int 0
+  rule #selectIndex(I, N) => N requires I >Int N
+  rule #selectIndex(I, _) => I [owise]
+
+  // C's (int) cast: truncation towards zero.
+  syntax Int ::= #truncInt(Float) [function, total]
+  rule #truncInt(F) => Float2Int(truncFloat(F)) requires notBool isNaN(F) andBool notBool isInfinite(F)
+  rule #truncInt(_) => 0 [owise]
+
+  // -------------------------------------------------------------- unpack
+  // unpack(t [, i [, j]]) returns t[i], ..., t[j]; i defaults to 1, j to #t.
+  syntax KItem ::= #unpack(Map, Val, Val)
+  rule <k> #apply(builtin("unpack"), ListItem(tref(T)) Rest)
+        => #unpack(M, #head(Rest), #head(#tail(Rest))) ...</k>
+       <tables> ... T |-> M:Map ... </tables>
+  rule <k> #apply(builtin("unpack"), ListItem(V:Val) _)
+        => #error("bad argument #1 to 'unpack' (table expected, got " +String #type(V) +String ")") ...</k>
+    requires notBool isTRef(V)
+  rule <k> #unpack(M, nil, J) => #unpack(M, 1.0, J) ...</k>
+  rule <k> #unpack(M, I:Float, nil) => #unpack(M, I, #border(M)) ...</k>
+  rule <k> #unpack(M, I:Float, J:Float) => #vals(#range(M, #truncInt(I), #truncInt(J))) ...</k>
+
+  syntax List ::= #range(Map, Int, Int) [function, total]
+  rule #range(M, I, J) => ListItem(#rawget(M, Int2Float(I, 53, 11))) #range(M, I +Int 1, J) requires I <=Int J
+  rule #range(_, _, _) => .List [owise]
 endmodule

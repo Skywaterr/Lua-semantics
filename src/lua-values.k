@@ -13,6 +13,7 @@ module LUA-VALUES
   syntax Val  ::= Nil | Bool | Float | String | TRef | Fn
   syntax TRef ::= tref(Int)                // a table, by id in <tables>
   syntax Fn   ::= builtin(String)          // a library function, by name
+                | closure(Int)             // a Lua function, by id in <funcs>
 
   // Expressions evaluate to values in place.
   syntax Exp     ::= Val
@@ -51,6 +52,10 @@ module LUA-VALUES
   syntax List ::= #tail(List) [function, total]
   rule #tail(ListItem(_) L) => L
   rule #tail(.List) => .List
+
+  syntax Bool ::= #isCall(K) [function, total]
+  rule #isCall(_:FunctionCall) => true
+  rule #isCall(_) => false [owise]
 
   // ----------------------------------------------------------- strings
   syntax String ::= #charAt(String, Int) [function, total]

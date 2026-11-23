@@ -17,6 +17,10 @@ module LUA-COMMON
 
   syntax Nil ::= "nil"
 
+  // `...` gets a sort of its own so rules can match it as `_:Vararg`: a bare
+  // `...` in a rule is read as K's cell-frame notation.
+  syntax Vararg ::= "..."
+
   // ---------------------------------------------------------------- blocks
   // chunk ::= {stat [';']} [laststat [';']]
   // `return` and `break` must end a block; keeping them out of Stmt is what
@@ -89,8 +93,8 @@ module LUA-COMMON
   syntax FunctionDef ::= "function" FuncBody
   syntax FuncBody    ::= "(" ParList ")" Block "end"
   syntax ParList     ::= Params
-                       | Names "," "..."
-                       | "..."
+                       | Names "," Vararg
+                       | Vararg
 
   // ------------------------------------------------------ prefix expressions
   // Only prefix expressions can be called or indexed, so `"s":rep(2)` and
@@ -146,7 +150,7 @@ module LUA-COMMON
                | Bool
                | Numeral
                | LString
-               | "..."
+               | Vararg
                | FunctionDef
                | TableCons
                > right:

@@ -164,9 +164,10 @@ module LUA-EVAL
   rule <k> #vals(L) ~> #prepend(O) => #vals(ListItem(O) L) ...</k>
   rule <k> #vals(L) ~> #applyTo(F) => #apply(F, L) ...</k>
 
-  // Library functions are defined in LUA-STDLIB; Lua functions in M3.
+  // Library functions are defined in LUA-STDLIB, Lua functions in
+  // LUA-FUNCTION. (Not [owise]: library rules use owise among themselves.)
   rule <k> #apply(F, _) => #error("attempt to call a " +String #type(F) +String " value") ...</k>
-    [owise]
+    requires #type(F) =/=String "function"
 
   syntax KItem ::= #args(Args)
   rule <k> #args(( Es:Exps ):Args) => #evalList(#exps2list(Es)) ...</k>
@@ -189,7 +190,7 @@ module LUA-EVAL
   rule #names2list(_) => .List [owise]
 
   // Every expression but the last gives one value; the last gives all of
-  // its values if it is a call (or `...`, M3).
+  // its values if it is a call or `...` (see LUA-FUNCTION).
   syntax KItem ::= #evalList(List) | #evalAcc(List, List) | #pushVal(List, List)
                  | #appendVals(List) | #multi(K) | "#toVals"
   rule <k> #evalList(L) => #evalAcc(L, .List) ...</k>
@@ -222,7 +223,6 @@ module LUA-EVAL
   // move), the locations allocated inside are freed and reused, which keeps
   // <store> small in long loops.
   syntax KItem ::= #block(Block) | #run(Block) | #restoreEnv(Map, Int, Int)
-  rule <k> #chunk(B) => #block(B) ...</k>
   rule <k> #block(B) => #run(B) ~> #restoreEnv(Env, NL, Ep) ...</k>
        <env> Env </env> <nextLoc> NL </nextLoc> <epoch> Ep </epoch>
 
@@ -352,12 +352,4 @@ module LUA-EVAL
   rule <k> #forLoop(_, _, _, _, _) => .K ...</k> [owise]
   rule <k> #forBody(X, V, B) => #bind(X, V) ~> #run(B) ~> #restoreEnv(Env, NL, Ep) ...</k>
        <env> Env </env> <nextLoc> NL </nextLoc> <epoch> Ep </epoch>
-
-  // ------------------------------------------------------ return
-  // Until functions exist (M3), `return` can only end the main chunk: its
-  // values are evaluated, then the program stops.
-  syntax KItem ::= "#returnTop"
-  rule <k> #last(return Es:Exps ;) => #last(return Es) ...</k>
-  rule <k> #last(return Es:Exps) => #evalList(#exps2list(Es)) ~> #returnTop ...</k>
-  rule <k> #vals(_) ~> #returnTop ~> _ => .K </k>
 endmodule
