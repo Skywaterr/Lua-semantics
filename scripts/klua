@@ -1,0 +1,53 @@
+#!/bin/sh
+# Run a Lua program with the K semantics, or only parse it.
+#
+#   scripts/klua FILE.lua           run it; program output on stdout. If the
+#                                   run does not finish, exits non-zero and
+#                                   prints the final configuration on stderr
+#   scripts/klua --parse FILE.lua   parse it; prints nothing on success
+#
+# Lua strings are byte strings, but K reads source files as UTF-8 and fails
+# on other bytes (tests/life.lua has some). The source is recoded from
+# Latin-1, so every byte becomes exactly one character, and the program's
+# output is recoded back, so byte values survive the round trip.
+#
+# Set KOMPILED to use a definition other than src/lua-kompiled.
+
+set -eu
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+def=${KOMPILED:-$root/src/lua-kompiled}
+
+mode=run
+if [ "${1:-}" = "--parse" ]; then
+    mode=parse
+    shift
+fi
+if [ $# -ne 1 ]; then
+    echo "usage: $0 [--parse] FILE.lua" >&2
+    exit 2
+fi
+src=$1
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+input=$tmp/$(basename "$src")
+iconv -f latin1 -t utf-8 "$src" > "$input"
+
+status=0
+if [ $mode = parse ]; then
+    kast --definition "$def" --output kore "$input" > /dev/null 2> "$tmp/err" || status=$?
+else
+    krun --definition "$def" --output pretty --output-file "$tmp/config" \
+        -cARGS="\"$src\"" "$input" > "$tmp/out" 2> "$tmp/err" || status=$?
+    iconv -f utf-8 -t latin1 "$tmp/out"
+    # A run that did not finish (stuck, or an error): show where it stopped.
+    if [ $status -ne 0 ] && [ -s "$tmp/config" ]; then
+        printf '\n--- final configuration (exit %s) ---\n' $status >> "$tmp/err"
+        cat "$tmp/config" >> "$tmp/err"
+    fi
+fi
+
+# Point error messages at the real file instead of the recoded copy.
+sed "s#$input#$src#g" "$tmp/err" >&2
+exit $status

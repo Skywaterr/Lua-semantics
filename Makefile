@@ -43,7 +43,10 @@ EXCLUDE  := env fib echo
 K_SRCS := $(filter-out $(patsubst %,tests/%.lua,$(EXCLUDE)),$(SRCS))
 K_OUTS := $(patsubst tests/%.lua,$(K_OUT)/%.out,$(K_SRCS))
 
-.PHONY: kompile run-k test clean-k
+# Grammar-only test programs, parsed by `make parse` but never run.
+SYNTAX_SRCS := $(wildcard tests/syntax/*.lua)
+
+.PHONY: kompile parse run-k test clean-k
 
 # Compile the semantics. Rebuilds only when a .k file changes.
 kompile: $(KOMPILED)/timestamp
@@ -51,15 +54,25 @@ kompile: $(KOMPILED)/timestamp
 $(KOMPILED)/timestamp: $(wildcard src/*.k)
 	kompile $(K_DEF) --backend llvm -o $(KOMPILED)
 
-# Run every non-excluded test through krun. Program output goes to
-# k-output/NAME.out, krun's stderr to k-logs/NAME.err. A failing run
-# leaves its (possibly empty) .out in place so compare counts it as failed.
+# Parse every test program (including the excluded ones) and every
+# tests/syntax/*.lua file. Fails if any of them does not parse.
+parse: kompile
+	@fail=0; \
+	for f in $(SRCS) $(SYNTAX_SRCS); do \
+		if scripts/klua --parse "$$f"; then echo "parse ok    $$f"; \
+		else echo "parse FAIL  $$f"; fail=1; fi; \
+	done; \
+	exit $$fail
+
+# Run every non-excluded test with scripts/klua. Program output goes to
+# k-output/NAME.out, klua's stderr (with the final configuration if the run
+# got stuck) to k-logs/NAME.err. A failing run leaves its (possibly partial)
+# .out in place so compare counts it as failed.
 run-k: $(K_OUTS)
 
 $(K_OUT)/%.out: tests/%.lua $(KOMPILED)/timestamp | $(K_OUT) $(K_LOGS)
-	@krun --definition $(KOMPILED) --output none -cARGS='"$<"' "$<" \
-		> "$@" 2> "$(K_LOGS)/$*.err" \
-		|| echo "krun failed on $< (see $(K_LOGS)/$*.err)"
+	@scripts/klua "$<" > "$@" 2> "$(K_LOGS)/$*.err" \
+		|| echo "run failed: $< (see $(K_LOGS)/$*.err)"
 
 # Run the semantics on the tests and compare against reference-output.
 test: run-k

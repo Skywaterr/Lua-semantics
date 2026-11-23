@@ -32,7 +32,7 @@ Goal: a K definition that runs every deterministic program in `tests/` and match
 - **Closures:** capture the `<env>` (Name → Loc) at creation, plus a reference to their function environment (`fenv`, which `getfenv`/`setfenv` need).
 - **Multiple values:** use an explicit `Values` list sort. Rules adjust it to one value in single-value contexts, and expand only the last expression of an explist, call-argument list or table constructor. `...` is a `Values` stored in the frame.
 - **Non-local control flow:** `return` and `break` pop to markers in `<k>` or `<stack>`. `error` unwinds to the nearest `pcall` marker.
-- **Source positions:** `debug.getinfo().currentline` and `short_src` are needed by `trace-globals`/`trace-calls` and by error messages. Use K's `[locations]` attribute on the statement and expression sorts so terms carry `#location(..., File, Line, ...)`. A rule records the current line as it executes.
+- **Source positions:** `debug.getinfo().currentline` and `short_src` are needed by `trace-globals`/`trace-calls` and by error messages. Use K's `[locations]` attribute on the statement and expression sorts so terms carry `#location(..., File, Line, ...)`. A rule records the current line as it executes. Not added in M1, to keep the AST plain while M2–M6 are written; add it in M7, where error messages first need lines. `short_src` comes from `<args>` (the script name), not from the location's file, which is `klua`'s recoded temporary copy.
 
 ## Milestones
 
@@ -55,7 +55,16 @@ Do the whole grammar up front, since parsing problems shape everything downstrea
   - The prefix-expression grammar is ambiguous (`a.b(c)` and `f(x)(y)`). Use a `PrefixExp`/`Var`/`Call` sort hierarchy, not one flat `Exp` sort.
   - Longest-match lexing of `..` against numbers like `1..2`.
   - The ALIVE/DEAD string literals in `life.lua` use non-UTF-8 bytes. Make sure the lexer accepts them, since they are overwritten right away.
-- Done when: `kast` parses all 15 tests plus a grammar stress file (`tests/syntax-*.lua`).
+- Done when: `kast` parses all 15 tests plus a grammar stress file (`tests/syntax/*.lua`).
+
+**Status: done.** `make parse` parses all 15 tests and `tests/syntax/stress.lua` (also checked with `luac -p`). What M1 decided, for later milestones:
+- **Module split:** `LUA-COMMON` holds the abstract grammar, with the token sorts `Name`, `Numeral` and `LString` declared without regexes. `LUA-SYNTAX` adds the regexes and `#Layout`, and is only used to parse programs. `LUA` imports `LUA-COMMON`, so K `String` literals in rules don't clash with Lua string tokens.
+- **Name-led and paren-led prefix expressions:** every prefix-expression form comes in two families, `NVar`/`NCall`/`NPrefix` (starting with a name) and `PVar`/`PCall`/`PPrefix` (starting with `(`). `Var`, `FunctionCall` and `PrefixExp` are their unions. A statement may begin with `(` (`PStmt`) only at the start of a block or right after `;`. Without this, `f(a)(b)(c)` is ambiguous and K's `prefer`/`avoid` can't fix it, because both readings have the same top production. M2 needs one rule per family for each suffix (`[e]`, `.n`, call, method call), each delegating to a shared operation. Known gap: `do end (f)()` needs a `;` before `(f)`.
+- **Assignment** has two forms, `NVar = NeExps` and `NVar , Vars = NeExps` (the same two in `PStmt`). `local`, `for … in` and assignment use the non-empty lists `Names`/`NeExps`, `return` and calls use `Exps`, and parameters use `Params` (possibly empty). `Exp ^ - Exp`, `Exp ^ not Exp` and `Exp ^ # Exp` are separate productions for `2^-3`; M2 can turn them into `^` with a unary operand. `FieldList` keeps its separators (`Field FieldSep FieldList`).
+- **Tokens are raw:** `LString` includes its quotes or brackets and undecoded escapes, and `Numeral` is undecoded text (hex included). M2 decodes both with `token2string`-style hooks.
+- **Bytes:** `scripts/klua` recodes the source from Latin-1 to UTF-8 before K reads it, and the output back again, so one K character is one Lua byte (`life.lua` needs this). Rules must only produce characters 0–255.
+- **Lexer limits:** K's regex reader reads `\f` and `\v` as letters, so form feed and vertical tab aren't whitespace. Long brackets are supported up to level 4.
+- **Harness:** `<exit-code>` starts at 1 and becomes 0 when `<k>` empties, so a stuck run fails. `klua` then prints the final configuration to stderr, which `make run-k` saves in `k-logs/NAME.err`.
 
 ### M2 — Core evaluation
 Literals, arithmetic, string↔number coercion, comparison, `and`/`or` short-circuit returning operands, `not`, `..`, `==` (by reference for tables and functions), globals in `_G`, locals with block scoping, `if`/`while`/`repeat` (the `until` condition sees the body's locals), `break`, and numeric `for` (start, limit and step evaluated once; hidden control variable; fresh local each iteration; float steps).
