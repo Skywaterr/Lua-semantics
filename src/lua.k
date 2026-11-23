@@ -10,6 +10,9 @@
 //   lua-function.k LUA-FUNCTION closures, calls, returns, varargs, generic for
 //   lua-table.k    LUA-TABLE    constructors, next/pairs/ipairs, table library
 //   lua-math.k     LUA-MATH     math library
+//   lua-pattern.k  LUA-PATTERN  Lua pattern matching (pure functions)
+//   lua-format.k   LUA-FORMAT   string.format conversions
+//   lua-string.k   LUA-STRING   string library, string methods
 //   lua-stdlib.k   LUA-STDLIB   the global table and library functions
 
 requires "lua-stdlib.k"

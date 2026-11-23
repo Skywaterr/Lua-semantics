@@ -1,0 +1,48 @@
+12	12	3	HELLO, WORLD	hello, world	dlroW ,olleH
+Hello	World	World	Hello, World		Hel	llo, World
+72	72	100	nil	Hi!	
+ababab			abcabc!
+3 items	1
+42 -7    42 42   | 00042 +42  42 007
+ff FF 0xff 10 010 3000000000 Lu
+3.141590 2.67      0.333 2.5       | +1.0 0 2 2 3.
+1.234568e+04 1.23E-04 5e+00 -3.333e-01
+100000 1e+06 1e-05 0.0001 0.333333 1.15292e+18 1E-10
+3.14 3.141592654 1.00000 0 -0 -0.000000
+str      right left      | tru     x|
+1 1.5 1e+20
+"a \"quoted\"\
+\\ string\000end\r"
+ 99.4%	no specs	    1|2    |
+inf -inf inf
+8	5	9	nil	nil
+3	9	nil	3	1	nil
+2	2	1	1
+key	value
+2024	01	15
+trim me|
+3		hel	hell
+abc	123	123
+x	nil
+quick	(a(b)c)
+world	X	a
+abc	a	,
+x	+		
+!?	1F	A1_
+aaa	ab	a	b
+[one][two][three]
+a:1 b:2 c:3 
+1 2 3 4 
+gfind	3
+hell0 w0rld	2
+<hello> <world>	2
+hello hello world	1
+-h-e-l-l-o-	6
+1bc	3
+AbC	3
+1 = x, 2 = y	2
+Ann is 30	2
+baa	50 percent	a%b	1
+one two	XaXXcX	4
+hello	2
+555	1.5	1010	23

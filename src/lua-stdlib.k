@@ -1,16 +1,16 @@
 // The standard library: the initial global table and library functions.
 // The base library so far (print, io.write, tostring, tonumber, type,
-// select, unpack, _VERSION) and the initial global table; table and math
-// live in lua-table.k and lua-math.k. The rest arrives with later
+// select, unpack, _VERSION) and the initial global table; table, math and
+// string live in lua-table.k, lua-math.k and lua-string.k. The rest arrives with later
 // milestones (see ROADMAP.md).
 
-requires "lua-math.k"
+requires "lua-string.k"
 
 module LUA-STDLIB
-  imports LUA-MATH
+  imports LUA-STRING
 
-  // Tables 0-4: _G, io, table, math, and arg, which holds the interpreter
-  // name at -1 and the script name at 0, as lua.c sets it up.
+  // Tables 0-5: _G, io, table, math, arg (the interpreter name at -1 and
+  // the script name at 0, as lua.c sets it up), string.
   rule <k> #init => .K ...</k>
        <args> Script </args>
        <tables> _ => 0 |-> #tbl(#globals, 0, nil)
@@ -18,8 +18,9 @@ module LUA-STDLIB
                      2 |-> #tbl(#tableLib, 0, nil)
                      3 |-> #tbl(#mathLib, 0, nil)
                      4 |-> #tbl((-1.0 |-> "lua" 0.0 |-> Script), 0, nil)
+                     5 |-> #tbl(#stringLib, 0, nil)
        </tables>
-       <nextTable> _ => 5 </nextTable>
+       <nextTable> _ => 6 </nextTable>
 
   syntax Map ::= "#globals" [function, total]
   rule #globals =>
@@ -33,6 +34,7 @@ module LUA-STDLIB
          "pairs"    |-> builtin("pairs")
          "print"    |-> builtin("print")
          "select"   |-> builtin("select")
+         "string"   |-> tref(5)
          "table"    |-> tref(2)
          "tonumber" |-> builtin("tonumber")
          "tostring" |-> builtin("tostring")
@@ -50,6 +52,7 @@ module LUA-STDLIB
   rule #tostr(tref(I))    => "table: 0x" +String #hex8(I +Int 1)
   rule #tostr(builtin(N)) => "function: builtin: " +String N
   rule #tostr(closure(I)) => "function: 0x" +String #hex8(I +Int 268435457)
+  rule #tostr(gmatchIter(I)) => "function: 0x" +String #hex8(I +Int 268435457)
 
   syntax String ::= #hex8(Int) [function, total]
   rule #hex8(I) => #rep("0", 8 -Int lengthString(Base2String(I, 16))) +String Base2String(I, 16)

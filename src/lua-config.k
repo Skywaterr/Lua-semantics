@@ -18,6 +18,7 @@ module LUA-CONFIG
   // <tables>  Id |-> #tbl(fields, array size, metatable); fields is a
   //           Val |-> Val map without nil values
   // <rand>    glibc random() state for math.random (empty until first use)
+  // <iters>   Id |-> state of each string.gmatch iterator
   // <args>    the script name, which becomes arg[0] (M4)
   // krun exits with <exit-code>: 1 until <k> empties, so a stuck run or an
   // error fails.
@@ -34,6 +35,7 @@ module LUA-CONFIG
       <nextTable> 0 </nextTable>
       <funcs> .Map </funcs>
       <rand> .List </rand>
+      <iters> .Map </iters>
       <nextFn> 0 </nextFn>
       <args> $ARGS:String </args>
       <output stream="stdout"> .List </output>

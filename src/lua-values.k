@@ -14,6 +14,7 @@ module LUA-VALUES
   syntax TRef ::= tref(Int)                // a table, by id in <tables>
   syntax Fn   ::= builtin(String)          // a library function, by name
                 | closure(Int)             // a Lua function, by id in <funcs>
+                | gmatchIter(Int)          // a string.gmatch iterator, state in <iters>
 
   // Expressions evaluate to values in place.
   syntax Exp     ::= Val
