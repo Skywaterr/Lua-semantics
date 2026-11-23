@@ -5,14 +5,18 @@ requires "lua-literal.k"
 
 module LUA-CONFIG
   imports LUA-LITERAL
+  imports K-LOCATIONS
 
   syntax KItem ::= "#init" | #chunk(Block)
 
   // <env>     Name |-> Loc for the locals in scope
   // <store>   Loc |-> Val; upvalues (M3) share a Loc
-  // <callStack> the active Lua function calls, innermost first, as
-  //           #frame(function, tail calls it replaced); globals are looked
-  //           up in the innermost function's environment (see #genv)
+  // <callStack> the active calls, innermost first, as #frame(function,
+  //           tail calls it replaced, current line, call expression);
+  //           library functions get a frame too (line -1). The call
+  //           expression (.K if called from outside Lua code) names the
+  //           function in error messages. Globals are looked up in the
+  //           innermost Lua function's environment (see #genv)
   // <threadEnv> the thread's global table (getfenv(0); what library
   //           functions see)
   // <strMeta> the metatable shared by all strings
@@ -57,13 +61,64 @@ module LUA-CONFIG
   syntax KItem ::= #vals(List)
 
   // ----------------------------------------------------------- errors
-  // A runtime error stops the program, recording "lua: msg" in <errors>
-  // (K offers no stderr stream; klua prints the final configuration of a
-  // failed run). pcall and positions come in M7. The rest of <k> is kept so
-  // the configuration shows where it happened.
-  syntax KItem ::= #error(String) | #halted(String)
-  rule <k> (#error(S) => #halted(S)) ~> _ </k>
-       <errors> ... .List => ListItem("lua: " +String S +String "\n") </errors>
+  // An error is #throw(value): it drops <k> up to the nearest #catch (left
+  // by pcall/xpcall), which restores the environment, varargs and call
+  // stack. Uncaught, it stops the program with "lua: msg" in <errors> (K
+  // offers no stderr stream; klua prints the final configuration of a
+  // failed run, and the exit code is 1).
+  //
+  // Messages get a "chunk:line: " prefix as in Lua 5.1:
+  //   #rtError(msg)  luaG_runerror: the running function's line, if it is
+  //                  a Lua function (an operator, indexing, a call ...)
+  //   #error(msg)    luaL_error, raised by a library function: the line of
+  //                  its caller (luaL_where(L, 1))
+  syntax KItem ::= #error(String) | #rtError(String) | #throw(Val) | #halted(Val)
+                 | #catch(Map, List, List, Val) | #caught(Val, Val) | "#xpres"
+  rule <k> #rtError(M) => #throw(#where(#level(S, 0), Src) +String M) ...</k>
+       <callStack> S </callStack> <args> Src </args>
+  rule <k> #error(M) => #throw(#where(#level(S, 1), Src) +String M) ...</k>
+       <callStack> S </callStack> <args> Src </args>
+
+  rule <k> #throw(V) ~> #catch(Env, VA, St, H) => #caught(V, H) ...</k>
+       <env> _ => Env </env> <varargs> _ => VA </varargs> <callStack> _ => St </callStack>
+  rule <k> #throw(_) ~> (I:KItem => .K) ...</k> requires notBool isCatchItem(I)
+  rule <k> #throw(V) => #halted(V) </k>
+       <errors> ... .List => ListItem("lua: " +String #errMsg(V) +String "\n") </errors>
+  // pcall: (false, error); xpcall: (false, handler(error)). A normal
+  // return gives (true, results...).
+  rule <k> #caught(V, nil) => #vals(ListItem(false) ListItem(V)) ...</k>
+  rule <k> #caught(V, H) => #apply(H, ListItem(V)) ~> #first ~> #xpres ...</k> requires H =/=K nil
+  rule <k> V:Val ~> #xpres => #vals(ListItem(false) ListItem(V)) ...</k>
+  rule <k> #vals(L) ~> #catch(_, _, _, _) => #vals(ListItem(true) L) ...</k>
+
+  syntax Bool ::= isCatchItem(KItem) [function, total]
+  rule isCatchItem(#catch(_, _, _, _)) => true
+  rule isCatchItem(_) => false [owise]
+
+  syntax String ::= #errMsg(Val) [function, total]
+  rule #errMsg(S:String) => S
+  rule #errMsg(F:Float) => #num2str(F)
+  rule #errMsg(_) => "(error object is not a string)" [owise]
+
+  // "chunk:line: " for a Lua frame with a known line, else "".
+  syntax String ::= #where(LevelRes, String) [function, total]
+  rule #where(#lvlFrame(#frame(closure(_), _, L, _)), Src) => #chunkid(Src) +String ":" +String Int2String(L) +String ": "
+    requires L >Int 0
+  rule #where(_, _) => "" [owise]
+
+  // luaO_chunkid for "@file": the name, or "..." and its last 52 bytes.
+  syntax String ::= #chunkid(String) [function, total]
+  rule #chunkid(S) => "..." +String substrString(S, lengthString(S) -Int 52, lengthString(S)) requires lengthString(S) >Int 52
+  rule #chunkid(S) => S [owise]
+
+  // Stack levels, as lua_getstack counts them: 0 is the innermost frame;
+  // a frame that replaced N tail calls stands for N more (lost) levels.
+  syntax LevelRes ::= #lvlFrame(Frame) | "#lvlLost" | "#lvlInvalid"
+  syntax LevelRes ::= #level(List, Int) [function, total]
+  rule #level(ListItem(F:Frame) _, 0) => #lvlFrame(F)
+  rule #level(ListItem(#frame(_, T, _, _)) Rest, L) => #level(Rest, L -Int 1 -Int T) requires L >Int 0
+  rule #level(_, L) => #lvlLost requires L <Int 0
+  rule #level(_, _) => #lvlInvalid [owise]
 
   // ----------------------------------------------------------- output
   syntax KItem ::= #output(String)
@@ -104,18 +159,50 @@ module LUA-CONFIG
   // A closure's data: parameters, vararg?, needs the `arg` table?, body,
   // captured Name |-> Loc map, environment table. See LUA-FUNCTION.
   syntax FunInfo ::= #fun(List, Bool, Bool, Block, Map, Val)
-  syntax Frame ::= #frame(Val, Int)
+  syntax Frame ::= #frame(Val, Int, Int, K)
 
   // The environment globals are read from and written to: the innermost
   // Lua function's (its current one, so setfenv takes effect at once).
-  // Calling a value (LUA-EVAL, LUA-FUNCTION, LUA-STDLIB give the rules).
-  syntax KItem ::= #apply(Val, List) | "#first" | "#discard"
+  // Calling a value (LUA-EVAL, LUA-FUNCTION give the rules); library
+  // functions' rules match #applyB, which runs inside their frame.
+  // #applyE also carries the call expression (see <callStack>).
+  syntax KItem ::= #apply(Val, List) | #applyE(Val, List, K) | #applyB(Val, List) | "#first" | "#discard"
+  rule <k> #apply(F, Args) => #applyE(F, Args, .K) ...</k>
+
+  // luaL_argerror: "bad argument #N to 'name' (msg)", where the name comes
+  // from the call site ('?' if there is none, e.g. a call from pcall). For
+  // a method call the self argument does not count.
+  syntax KItem ::= #badArg(Int, String)
+  rule <k> #badArg(N, Msg) => #error(#badArgMsg(N, Msg, E)) ...</k>
+       <callStack> ListItem(#frame(_, _, _, E)) ... </callStack>
+  syntax String ::= #badArgMsg(Int, String, K) [function, total]
+  rule #badArgMsg(1, Msg, #method(Name)) => "calling '" +String Name +String "' on bad self (" +String Msg +String ")"
+  rule #badArgMsg(N, Msg, #method(Name)) => "bad argument #" +String Int2String(N -Int 1) +String " to '" +String Name +String "' (" +String Msg +String ")"
+    requires N =/=Int 1
+  rule #badArgMsg(N, Msg, E) => "bad argument #" +String Int2String(N) +String " to '" +String #callName(E) +String "' (" +String Msg +String ")" [owise]
+
+  // The name getfuncname would find for a call expression.
+  syntax KItem ::= #method(String) | "#forgen"
+  syntax String ::= #callName(K) [function, total]
+  rule #callName(X:Name) => Name2String(X)
+  rule #callName(_:NPrefix . N:Name) => Name2String(N)
+  rule #callName(_:PPrefix . N:Name) => Name2String(N)
+  rule #callName(_:NPrefix [ S:LString ]) => #decodeLString(LString2String(S))
+  rule #callName(_:PPrefix [ S:LString ]) => #decodeLString(LString2String(S))
+  rule #callName(( E:Exp ):PPrefix) => #callName(E)
+  rule #callName(#method(N)) => N
+  rule #callName(#forgen) => "(for generator)"
+  rule #callName(_) => "?" [owise]
 
   syntax KItem ::= "#genv"
   rule <k> #genv => G ...</k>
-       <callStack> ListItem(#frame(closure(I), _)) ... </callStack>
+       <callStack> ListItem(#frame(closure(I), _, _, _)) ... </callStack>
        <funcs> ... I |-> #fun(_, _, _, _, _, G) ... </funcs>
-  rule <k> #genv => G ...</k> <callStack> .List </callStack> <threadEnv> G </threadEnv>
+  rule <k> #genv => G ...</k> <callStack> S </callStack> <threadEnv> G </threadEnv>
+    requires notBool #topIsClosure(S)
+  syntax Bool ::= #topIsClosure(List) [function, total]
+  rule #topIsClosure(ListItem(#frame(closure(_), _, _, _)) _) => true
+  rule #topIsClosure(_) => false [owise]
 
   // ----------------------------------------------------------- metatables
   // The metatable of a value: tables have their own, strings share
@@ -138,7 +225,7 @@ module LUA-CONFIG
   rule <k> #index(tref(T), K) => #rawget(M, K) ...</k> <tables> ... T |-> #tbl(M, _, _) ... </tables>
     requires #rawget(M, K) =/=K nil [priority(40)]
   rule <k> #index(T, K) => #gettable(T, K, 0) ...</k>
-  rule <k> #gettable(_, _, C) => #error("loop in gettable") ...</k> requires C >=Int 100
+  rule <k> #gettable(_, _, C) => #rtError("loop in gettable") ...</k> requires C >=Int 100
   rule <k> #gettable(tref(T), K, C) => #rawget(M, K) ~> #gtRaw(tref(T), K, C) ...</k>
        <tables> ... T |-> #tbl(M, _, _) ... </tables>
     requires C <Int 100
@@ -147,7 +234,7 @@ module LUA-CONFIG
   rule <k> V:Val ~> #gtRaw(_, _, _) => V ...</k> requires V =/=K nil
   rule <k> nil ~> #gtRaw(T, K, C) => #getTM(T, "__index") ~> #gtTM(T, K, C, true) ...</k>
   rule <k> nil ~> #gtTM(_, _, _, true) => nil ...</k>
-  rule <k> nil ~> #gtTM(V, _, _, false) => #error("attempt to index a " +String #type(V) +String " value") ...</k>
+  rule <k> nil ~> #gtTM(V, _, _, false) => #rtError("attempt to index a " +String #type(V) +String " value") ...</k>
   rule <k> H:Val ~> #gtTM(V, K, _, _) => #apply(H, ListItem(V) ListItem(K)) ~> #first ...</k>
     requires #type(H) ==String "function"
   rule <k> H:Val ~> #gtTM(_, K, C, _) => #gettable(H, K, C +Int 1) ...</k>
@@ -160,7 +247,7 @@ module LUA-CONFIG
   syntax KItem ::= #setIndex(Val, Val, Val) | #settable(Val, Val, Val, Int) | #stTM(Val, Val, Val, Int, Bool)
                  | #rawsetT(Int, Val, Val)
   rule <k> #setIndex(T, K, V) => #settable(T, K, V, 0) ...</k>
-  rule <k> #settable(_, _, _, C) => #error("loop in settable") ...</k> requires C >=Int 100
+  rule <k> #settable(_, _, _, C) => #rtError("loop in settable") ...</k> requires C >=Int 100
   rule <k> #settable(tref(T), K, V, C) => #rawsetT(T, K, V) ...</k>
        <tables> ... T |-> #tbl(M, _, Mt) ... </tables>
     requires C <Int 100 andBool (#rawget(M, K) =/=K nil orBool Mt ==K nil)
@@ -170,15 +257,15 @@ module LUA-CONFIG
   rule <k> #settable(T, K, V, C) => #getTM(T, "__newindex") ~> #stTM(T, K, V, C, false) ...</k>
     requires C <Int 100 andBool notBool isTRef(T)
   rule <k> nil ~> #stTM(tref(T), K, V, _, true) => #rawsetT(T, K, V) ...</k>
-  rule <k> nil ~> #stTM(T, _, _, _, false) => #error("attempt to index a " +String #type(T) +String " value") ...</k>
+  rule <k> nil ~> #stTM(T, _, _, _, false) => #rtError("attempt to index a " +String #type(T) +String " value") ...</k>
   rule <k> H:Val ~> #stTM(T, K, V, _, _) => #apply(H, ListItem(T) ListItem(K) ListItem(V)) ~> #discard ...</k>
     requires #type(H) ==String "function"
   rule <k> H:Val ~> #stTM(_, K, V, C, _) => #settable(H, K, V, C +Int 1) ...</k>
     requires H =/=K nil andBool #type(H) =/=String "function"
 
   // rawset, with the key checks.
-  rule <k> #rawsetT(_, nil, _) => #error("table index is nil") ...</k>
-  rule <k> #rawsetT(_, K, _) => #error("table index is NaN") ...</k> requires #isNaNVal(K)
+  rule <k> #rawsetT(_, nil, _) => #rtError("table index is nil") ...</k>
+  rule <k> #rawsetT(_, K, _) => #rtError("table index is NaN") ...</k> requires #isNaNVal(K)
   rule <k> #rawsetT(T, K, V) => .K ...</k>
        <tables> ... T |-> #tbl((M => #rawset(M, K, V)), _, _) ... </tables>
     requires K =/=K nil andBool notBool #isNaNVal(K)

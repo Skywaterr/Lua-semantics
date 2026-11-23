@@ -33,10 +33,10 @@ module LUA-STRING
   rule #str(_) => "" [owise]
 
   // The first argument of a string function must be a string.
-  rule <k> #apply(builtin(N), ListItem(V:Val) _) => #argError(1, #shortName(N), "string", V) ...</k>
+  rule <k> #applyB(builtin(N), ListItem(V:Val) _) => #argError(1, #shortName(N), "string", V) ...</k>
     requires #startsWith(N, "string.") andBool N =/=String "string.char" andBool notBool #isStrArg(V)
-  rule <k> #apply(builtin(N), .List)
-        => #error("bad argument #1 to '" +String #shortName(N) +String "' (string expected, got no value)") ...</k>
+  rule <k> #applyB(builtin(N), .List)
+        => #badArg(1, "string expected, got no value") ...</k>
     requires #startsWith(N, "string.") andBool N =/=String "string.char"
 
   // posrelat: negative positions count from the end; below that is 0.
@@ -46,11 +46,11 @@ module LUA-STRING
   rule #posrelat0(P) => #if P >=Int 0 #then P #else 0 #fi
 
   // ============================================================ basics
-  rule <k> #apply(builtin("string.len"), ListItem(S:Val) _) => #vals(ListItem(Int2Float(lengthString(#str(S)), 53, 11))) ...</k>
+  rule <k> #applyB(builtin("string.len"), ListItem(S:Val) _) => #vals(ListItem(Int2Float(lengthString(#str(S)), 53, 11))) ...</k>
     requires #isStrArg(S)
 
   // sub(s, i = 1, j = -1)
-  rule <k> #apply(builtin("string.sub"), ListItem(S:Val) Rest) =>
+  rule <k> #applyB(builtin("string.sub"), ListItem(S:Val) Rest) =>
          #vals(ListItem(#sub(#str(S), #posrelat(#optInt(#head(Rest), 1), lengthString(#str(S))),
                                       #posrelat(#optInt(#head(#tail(Rest)), -1), lengthString(#str(S)))))) ...</k>
     requires #isStrArg(S)
@@ -59,8 +59,8 @@ module LUA-STRING
     requires maxInt(I, 1) <=Int minInt(J, lengthString(S))
   rule #sub(_, _, _) => "" [owise]
 
-  rule <k> #apply(builtin("string.upper"), ListItem(S:Val) _) => #vals(ListItem(#upper(#str(S)))) ...</k> requires #isStrArg(S)
-  rule <k> #apply(builtin("string.lower"), ListItem(S:Val) _) => #vals(ListItem(#lower(#str(S)))) ...</k> requires #isStrArg(S)
+  rule <k> #applyB(builtin("string.upper"), ListItem(S:Val) _) => #vals(ListItem(#upper(#str(S)))) ...</k> requires #isStrArg(S)
+  rule <k> #applyB(builtin("string.lower"), ListItem(S:Val) _) => #vals(ListItem(#lower(#str(S)))) ...</k> requires #isStrArg(S)
   syntax String ::= #upper(String) [function, total] | #upperFrom(String, Int, String) [function, total]
   rule #upper(S) => #upperFrom(S, 0, "")
   rule #upperFrom(S, I, Acc) => Acc requires I >=Int lengthString(S)
@@ -68,15 +68,17 @@ module LUA-STRING
     requires I <Int lengthString(S) andBool ordChar(#charAt(S, I)) >=Int 97 andBool ordChar(#charAt(S, I)) <=Int 122
   rule #upperFrom(S, I, Acc) => #upperFrom(S, I +Int 1, Acc +String #charAt(S, I)) [owise]
 
-  rule <k> #apply(builtin("string.rep"), ListItem(S:Val) ListItem(N:Val) _) => #vals(ListItem(#rep(#str(S), #optInt(N, 0)))) ...</k>
-    requires #isStrArg(S)
-  rule <k> #apply(builtin("string.reverse"), ListItem(S:Val) _) => #vals(ListItem(#reverse(#str(S), ""))) ...</k> requires #isStrArg(S)
+  rule <k> #applyB(builtin("string.rep"), ListItem(S:Val) ListItem(N:Val) _) => #vals(ListItem(#rep(#str(S), #optInt(N, 0)))) ...</k>
+    requires #isStrArg(S) andBool isFloat(#tonumber(N))
+  rule <k> #applyB(builtin("string.rep"), ListItem(S:Val) Rest) => #badArg(2, "number expected, got " +String #typeOrNone(Rest)) ...</k>
+    requires #isStrArg(S) andBool notBool isFloat(#tonumber(#head(Rest)))
+  rule <k> #applyB(builtin("string.reverse"), ListItem(S:Val) _) => #vals(ListItem(#reverse(#str(S), ""))) ...</k> requires #isStrArg(S)
   syntax String ::= #reverse(String, String) [function, total]
   rule #reverse("", Acc) => Acc
   rule #reverse(S, Acc) => #reverse(substrString(S, 1, lengthString(S)), #charAt(S, 0) +String Acc) [owise]
 
   // byte(s, i = 1, j = i)
-  rule <k> #apply(builtin("string.byte"), ListItem(S:Val) Rest) =>
+  rule <k> #applyB(builtin("string.byte"), ListItem(S:Val) Rest) =>
          #vals(#bytes(#str(S), maxInt(#posrelat(#optInt(#head(Rest), 1), lengthString(#str(S))), 1),
                       minInt(#posrelat(#optInt(#head(#tail(Rest)), #optInt(#head(Rest), 1)), lengthString(#str(S))), lengthString(#str(S))))) ...</k>
     requires #isStrArg(S)
@@ -85,25 +87,26 @@ module LUA-STRING
   rule #bytes(_, _, _) => .List [owise]
 
   // char(...): each argument an integer 0..255
-  rule <k> #apply(builtin("string.char"), Args) => #chars(Args, 1, "") ...</k>
+  rule <k> #applyB(builtin("string.char"), Args) => #chars(Args, 1, "") ...</k>
   syntax KItem ::= #chars(List, Int, String)
   rule <k> #chars(.List, _, Acc) => #vals(ListItem(Acc)) ...</k>
   rule <k> #chars(ListItem(V:Val) L, N, Acc) => #chars(L, N +Int 1, Acc +String chrChar(#truncInt({#tonumber(V)}:>Float))) ...</k>
     requires isFloat(#tonumber(V)) andBool #truncInt({#tonumber(V)}:>Float) >=Int 0 andBool #truncInt({#tonumber(V)}:>Float) <=Int 255
-  rule <k> #chars(ListItem(V:Val) _, N, _) => #error("bad argument #" +String Int2String(N) +String " to 'char' (invalid value)") ...</k>
+  rule <k> #chars(ListItem(V:Val) _, N, _) => #badArg(N, "invalid value") ...</k>
     requires isFloat(#tonumber(V))
      andBool notBool (#truncInt({#tonumber(V)}:>Float) >=Int 0 andBool #truncInt({#tonumber(V)}:>Float) <=Int 255)
   rule <k> #chars(ListItem(V:Val) _, N, _) => #argError(N, "char", "number", V) ...</k>
     requires notBool isFloat(#tonumber(V))
 
-  rule <k> #apply(builtin("string.dump"), _) => #error("unable to dump given function") ...</k>
+  rule <k> #applyB(builtin("string.dump"), _) => #error("unable to dump given function") ...</k>
 
   // ============================================================ format
-  rule <k> #apply(builtin("string.format"), ListItem(F:Val) Args) => #fmtResult(#format(#str(F), 0, Args, 2, "")) ...</k>
+  rule <k> #applyB(builtin("string.format"), ListItem(F:Val) Args) => #fmtResult(#format(#str(F), 0, Args, 2, "")) ...</k>
     requires #isStrArg(F)
   syntax KItem ::= #fmtResult(FmtRes)
   rule <k> #fmtResult(#fok(S)) => #vals(ListItem(S)) ...</k>
   rule <k> #fmtResult(#ferr(M)) => #error(M) ...</k>
+  rule <k> #fmtResult(#fbad(N, M)) => #badArg(N, M) ...</k>
 
   // ============================================================ find, match
   // find(s, p, init = 1, plain): plain search if asked or if p has no
@@ -112,11 +115,11 @@ module LUA-STRING
   syntax Bool ::= #hasSpecials(String) [function, total]
   rule #hasSpecials(P) => findChar(P, "^$*+?.([%-", 0) >=Int 0
 
-  rule <k> #apply(builtin(N), ListItem(S:Val) ListItem(P:Val) Rest) =>
+  rule <k> #applyB(builtin(N), ListItem(S:Val) ListItem(P:Val) Rest) =>
          #find(#str(S), #str(P), #clampInit(#posrelat(#optInt(#head(Rest), 1), lengthString(#str(S))) -Int 1, lengthString(#str(S))),
                N ==String "string.find", N ==String "string.find" andBool #truthy(#head(#tail(Rest)))) ...</k>
     requires (N ==String "string.find" orBool N ==String "string.match") andBool #isStrArg(S) andBool #isStrArg(P)
-  rule <k> #apply(builtin(N), ListItem(S:Val) Rest) => #argError(2, #shortName(N), "string", #head(Rest)) ...</k>
+  rule <k> #applyB(builtin(N), ListItem(S:Val) Rest) => #argError(2, #shortName(N), "string", #head(Rest)) ...</k>
     requires (N ==String "string.find" orBool N ==String "string.match" orBool N ==String "string.gmatch" orBool N ==String "string.gsub")
      andBool #isStrArg(S) andBool notBool #isStrArg(#head(Rest))
 
@@ -153,12 +156,12 @@ module LUA-STRING
   // ============================================================ gmatch
   // An iterator holding (subject, pattern, next position) in <iters>. As in
   // 5.1, '^' is not an anchor here. An empty match advances by one.
-  rule <k> #apply(builtin("string.gmatch"), ListItem(S:Val) ListItem(P:Val) _) => #vals(ListItem(gmatchIter(I))) ...</k>
+  rule <k> #applyB(builtin("string.gmatch"), ListItem(S:Val) ListItem(P:Val) _) => #vals(ListItem(gmatchIter(I))) ...</k>
        <iters> Its => Its [ I <- #gm(#str(S), #str(P), 0) ] </iters>
        <nextFn> I => I +Int 1 </nextFn>
     requires #isStrArg(S) andBool #isStrArg(P)
   syntax GmState ::= #gm(String, String, Int)
-  rule <k> #apply(gmatchIter(I), _) => #gmatchStep(I, S, P, Pos) ...</k>
+  rule <k> #applyB(gmatchIter(I), _) => #gmatchStep(I, S, P, Pos) ...</k>
        <iters> ... I |-> #gm(S, P, Pos) ... </iters>
   syntax KItem ::= #gmatchStep(Int, String, String, Int) | #gmatchRes(Int, MRes, String, String, Int)
   rule <k> #gmatchStep(_, S, _, Pos) => #vals(.List) ...</k> requires Pos >Int lengthString(S)
@@ -175,12 +178,12 @@ module LUA-STRING
   // gsub(s, p, repl, n = #s + 1): repl is a string (with %0-%9 and %%), a
   // table (indexed by the first capture) or a function (called with the
   // captures); a false/nil result keeps the original match.
-  rule <k> #apply(builtin("string.gsub"), ListItem(S:Val) ListItem(P:Val) ListItem(R:Val) Rest) =>
+  rule <k> #applyB(builtin("string.gsub"), ListItem(S:Val) ListItem(P:Val) ListItem(R:Val) Rest) =>
          #gsub(#str(S), #gsubPat(#str(P)), #startsWith(#str(P), "^"), R,
                #optInt(#head(Rest), lengthString(#str(S)) +Int 1), 0, 0, "") ...</k>
     requires #isStrArg(S) andBool #isStrArg(P) andBool (#isStrArg(R) orBool isTRef(R) orBool #type(R) ==String "function")
-  rule <k> #apply(builtin("string.gsub"), ListItem(S:Val) ListItem(P:Val) Rest)
-        => #error("bad argument #3 to 'gsub' (string/function/table expected)") ...</k>
+  rule <k> #applyB(builtin("string.gsub"), ListItem(S:Val) ListItem(P:Val) Rest)
+        => #badArg(3, "string/function/table expected") ...</k>
     requires #isStrArg(S) andBool #isStrArg(P)
      andBool notBool (#isStrArg(#head(Rest)) orBool isTRef(#head(Rest)) orBool #type(#head(Rest)) ==String "function")
 

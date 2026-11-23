@@ -48,11 +48,12 @@ SYNTAX_SRCS := $(wildcard tests/syntax/*.lua)
 
 .PHONY: kompile parse run-k test clean-k
 
-# Compile the semantics. Rebuilds only when a .k file changes.
+# Compile the semantics. Rebuilds only when a .k file changes. The Bison
+# parser (parser_PGM) is much faster than kast and records statement lines.
 kompile: $(KOMPILED)/timestamp
 
 $(KOMPILED)/timestamp: $(wildcard src/*.k)
-	kompile $(K_DEF) --backend llvm -o $(KOMPILED)
+	kompile $(K_DEF) --backend llvm --gen-glr-bison-parser -o $(KOMPILED)
 
 # Parse every test program (including the excluded ones) and every
 # tests/syntax/*.lua file. Fails if any of them does not parse.

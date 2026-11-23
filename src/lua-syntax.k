@@ -34,6 +34,13 @@ module LUA-COMMON
 
   syntax Stmts ::= List{Stmt, ""}
 
+  // Statements are wrapped in #location(Stmt, file, line, col, endLine,
+  // endCol) by the Bison parser (kompile --gen-glr-bison-parser), which is
+  // where error messages and debug.getinfo get their line numbers.
+  syntax Stmt [locations]
+  syntax LastStmt [locations]
+  syntax PStmt [locations]
+
   syntax LastStmt ::= "return" Exps
                     | "return" Exps ";"
                     | "break"

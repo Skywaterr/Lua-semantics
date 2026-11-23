@@ -14,7 +14,7 @@ module LUA-FORMAT
   rule #hasFlag(#spec(Fl, _, _), F) => findString(Fl, F, 0) >=Int 0
 
   // The result of formatting: the text, or an error message.
-  syntax FmtRes ::= #fok(String) | #ferr(String)
+  syntax FmtRes ::= #fok(String) | #ferr(String) | #fbad(Int, String)   // #fbad: a bad argument
 
   // ============================================================ driver
   // #format(fmt, position in fmt, args, argument number, output so far)
@@ -80,12 +80,12 @@ module LUA-FORMAT
   syntax FmtRes ::= #fmtOne(String, Spec, Val, Bool, Int) [function, total]
   rule #fmtOne(C, _, _, _, _) => #ferr("invalid option '%" +String C +String "' to 'format'")
     requires findString("cdiouxXeEfgGqs", C, 0) <Int 0 orBool lengthString(C) =/=Int 1
-  rule #fmtOne(C, _, _, false, N) => #badArg(N, #if C ==String "s" orBool C ==String "q" #then "string" #else "number" #fi, "no value")
+  rule #fmtOne(C, _, _, false, N) => #fmtBadArg(N, #if C ==String "s" orBool C ==String "q" #then "string" #else "number" #fi, "no value")
     requires findString("cdiouxXeEfgGqs", C, 0) >=Int 0 andBool lengthString(C) ==Int 1
-  rule #fmtOne(C, _, V, true, N) => #badArg(N, "number", #type(V))
+  rule #fmtOne(C, _, V, true, N) => #fmtBadArg(N, "number", #type(V))
     requires findString("cdiouxXeEfgG", C, 0) >=Int 0 andBool lengthString(C) ==Int 1
      andBool notBool isFloat(#tonumber(V))
-  rule #fmtOne(C, _, V, true, N) => #badArg(N, "string", #type(V))
+  rule #fmtOne(C, _, V, true, N) => #fmtBadArg(N, "string", #type(V))
     requires (C ==String "s" orBool C ==String "q") andBool #tostringCoerce(V) ==K nil
   rule #fmtOne("q", _, V, true, _) => #fok(#quoted({#tostringCoerce(V)}:>String))
     requires #tostringCoerce(V) =/=K nil
@@ -95,9 +95,8 @@ module LUA-FORMAT
     requires findString("cdiouxXeEfgG", C, 0) >=Int 0 andBool lengthString(C) ==Int 1
      andBool isFloat(#tonumber(V))
 
-  syntax FmtRes ::= #badArg(Int, String, String) [function, total]
-  rule #badArg(N, Want, Got) => #ferr("bad argument #" +String Int2String(N) +String " to 'format' ("
-                                      +String Want +String " expected, got " +String Got +String ")")
+  syntax FmtRes ::= #fmtBadArg(Int, String, String) [function, total]
+  rule #fmtBadArg(N, Want, Got) => #fbad(N, Want +String " expected, got " +String Got)
 
   // ------------------------------------------------------------ padding
   // Pad to the width: on the right with '-', else on the left with spaces,

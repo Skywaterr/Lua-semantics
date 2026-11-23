@@ -33,12 +33,12 @@ module LUA-MATH
                orBool N ==String "math.sqrt" orBool N ==String "math.tan"
   rule #isMath2(N) => N ==String "math.fmod" orBool N ==String "math.pow" orBool N ==String "math.atan2"
 
-  rule <k> #apply(builtin(N), ListItem(X:Val) _) => #vals(ListItem(#math1(N, {#tonumber(X)}:>Float))) ...</k>
+  rule <k> #applyB(builtin(N), ListItem(X:Val) _) => #vals(ListItem(#math1(N, {#tonumber(X)}:>Float))) ...</k>
     requires #isMath1(N) andBool isFloat(#tonumber(X))
-  rule <k> #apply(builtin(N), ListItem(X:Val) ListItem(Y:Val) _)
+  rule <k> #applyB(builtin(N), ListItem(X:Val) ListItem(Y:Val) _)
         => #vals(ListItem(#math2(N, {#tonumber(X)}:>Float, {#tonumber(Y)}:>Float))) ...</k>
     requires #isMath2(N) andBool isFloat(#tonumber(X)) andBool isFloat(#tonumber(Y))
-  rule <k> #apply(builtin(N), Args) => #numArgError(N, Args, 1) ...</k>
+  rule <k> #applyB(builtin(N), Args) => #numArgError(N, Args, 1) ...</k>
     requires (#isMath1(N) andBool notBool (size(Args) >=Int 1 andBool isFloat(#tonumber(#head(Args)))))
       orBool (#isMath2(N) andBool notBool (size(Args) >=Int 2 andBool isFloat(#tonumber(#head(Args)))
                                             andBool isFloat(#tonumber(#head(#tail(Args))))))
@@ -47,8 +47,8 @@ module LUA-MATH
   syntax KItem ::= #numArgError(String, List, Int)
   rule <k> #numArgError(N, ListItem(V:Val) L, I) => #numArgError(N, L, I +Int 1) ...</k> requires isFloat(#tonumber(V))
   rule <k> #numArgError(N, ListItem(V:Val) _, I) => #argError(I, #shortName(N), "number", V) ...</k> [owise]
-  rule <k> #numArgError(N, .List, I)
-        => #error("bad argument #" +String Int2String(I) +String " to '" +String #shortName(N) +String "' (number expected, got no value)") ...</k>
+  rule <k> #numArgError(_, .List, I)
+        => #badArg(I, "number expected, got no value") ...</k>
 
   syntax Float ::= #math1(String, Float) [function, total]
   rule #math1("math.abs", X)   => absFloat(X)
@@ -103,11 +103,11 @@ module LUA-MATH
   rule #intTimes2(R, E) => #scale2(Int2Float(R, 53, 11), E) [owise]
 
   // ------------------------------------------------------------ max, min
-  rule <k> #apply(builtin("math.max"), Args) => #vals(ListItem(#fold(true, #numbers(Args)))) ...</k>
+  rule <k> #applyB(builtin("math.max"), Args) => #vals(ListItem(#fold(true, #numbers(Args)))) ...</k>
     requires size(Args) >=Int 1 andBool size(#numbers(Args)) ==Int size(Args)
-  rule <k> #apply(builtin("math.min"), Args) => #vals(ListItem(#fold(false, #numbers(Args)))) ...</k>
+  rule <k> #applyB(builtin("math.min"), Args) => #vals(ListItem(#fold(false, #numbers(Args)))) ...</k>
     requires size(Args) >=Int 1 andBool size(#numbers(Args)) ==Int size(Args)
-  rule <k> #apply(builtin(N), Args) => #numArgError(N, Args, 1) ...</k>
+  rule <k> #applyB(builtin(N), Args) => #numArgError(N, Args, 1) ...</k>
     requires (N ==String "math.max" orBool N ==String "math.min")
      andBool notBool (size(Args) >=Int 1 andBool size(#numbers(Args)) ==Int size(Args))
 
@@ -133,7 +133,7 @@ module LUA-MATH
   // math.random: r = (rand() % RAND_MAX) / RAND_MAX, then r, floor(r*m) + 1
   // or floor(r*(n-m+1)) + m.
   syntax KItem ::= "#randNext" | #randArgs(List)
-  rule <k> #apply(builtin("math.random"), Args) => #randNext ~> #randArgs(Args) ...</k>
+  rule <k> #applyB(builtin("math.random"), Args) => #randNext ~> #randArgs(Args) ...</k>
   rule <k> #randNext ...</k> <rand> .List => #glibcSeed(1) </rand> [priority(40)]
   rule <k> #randNext => Int2Float((#randOut(W) >>Int 1) %Int 2147483647, 53, 11) /Float 2147483647.0 ...</k>
        <rand> W => range(W, 1, 0) ListItem(#randOut(W)) </rand>
@@ -151,18 +151,18 @@ module LUA-MATH
                           +Float #ik(#truncInt({#tonumber(M)}:>Float)))) ...</k>
     requires isFloat(#tonumber(M)) andBool isFloat(#tonumber(N))
      andBool #truncInt({#tonumber(M)}:>Float) <=Int #truncInt({#tonumber(N)}:>Float)
-  rule <k> _:Float ~> #randArgs(ListItem(M:Val)) => #error("bad argument #1 to 'random' (interval is empty)") ...</k>
+  rule <k> _:Float ~> #randArgs(ListItem(M:Val)) => #badArg(1, "interval is empty") ...</k>
     requires isFloat(#tonumber(M)) andBool 1 >Int #truncInt({#tonumber(M)}:>Float)
-  rule <k> _:Float ~> #randArgs(ListItem(M:Val) ListItem(N:Val)) => #error("bad argument #2 to 'random' (interval is empty)") ...</k>
+  rule <k> _:Float ~> #randArgs(ListItem(M:Val) ListItem(N:Val)) => #badArg(2, "interval is empty") ...</k>
     requires isFloat(#tonumber(M)) andBool isFloat(#tonumber(N))
      andBool #truncInt({#tonumber(M)}:>Float) >Int #truncInt({#tonumber(N)}:>Float)
   rule <k> _:Float ~> #randArgs(Args) => #error("wrong number of arguments") ...</k> requires size(Args) >Int 2
 
   // srand((int) x): the seed is a C unsigned int.
-  rule <k> #apply(builtin("math.randomseed"), ListItem(X:Val) _) => #vals(.List) ...</k>
+  rule <k> #applyB(builtin("math.randomseed"), ListItem(X:Val) _) => #vals(.List) ...</k>
        <rand> _ => #glibcSeed(#truncInt({#tonumber(X)}:>Float) modInt 4294967296) </rand>
     requires isFloat(#tonumber(X))
-  rule <k> #apply(builtin("math.randomseed"), Args) => #numArgError("math.randomseed", Args, 1) ...</k>
+  rule <k> #applyB(builtin("math.randomseed"), Args) => #numArgError("math.randomseed", Args, 1) ...</k>
     requires notBool (size(Args) >=Int 1 andBool isFloat(#tonumber(#head(Args))))
 
   // The 31 values r[313..343] for a seed (srandom_r, then 310 discarded

@@ -1,0 +1,65 @@
+false	tests/feature-errors.lua:7: attempt to index upvalue 't' (a nil value)
+false	tests/feature-errors.lua:8: attempt to index field 'b' (a nil value)
+false	tests/feature-errors.lua:9: attempt to call global 'undefinedfn' (a nil value)
+false	tests/feature-errors.lua:10: attempt to call method 'nomethod' (a nil value)
+false	tests/feature-errors.lua:11: attempt to index field '?' (a nil value)
+false	tests/feature-errors.lua:12: attempt to call field 'key' (a nil value)
+false	tests/feature-errors.lua:13: attempt to index global 'x' (a nil value)
+false	tests/feature-errors.lua:14: attempt to index local 'a' (a nil value)
+false	tests/feature-errors.lua:15: attempt to perform arithmetic on a table value
+false	tests/feature-errors.lua:16: attempt to perform arithmetic on local 'n' (a nil value)
+false	tests/feature-errors.lua:17: attempt to concatenate a nil value
+false	tests/feature-errors.lua:18: attempt to concatenate a table value
+false	tests/feature-errors.lua:19: attempt to get length of a nil value
+false	tests/feature-errors.lua:20: attempt to perform arithmetic on a table value
+false	tests/feature-errors.lua:21: attempt to compare two table values
+false	tests/feature-errors.lua:22: attempt to compare number with string
+false	tests/feature-errors.lua:23: attempt to compare table with number
+false	tests/feature-errors.lua:24: attempt to index upvalue 'up' (a nil value)
+false	tests/feature-errors.lua:25: 'for' initial value must be a number
+false	tests/feature-errors.lua:26: 'for' limit must be a number
+false	tests/feature-errors.lua:27: table index is nil
+false	tests/feature-errors.lua:28: table index is NaN
+false	attempt to call a nil value
+false	attempt to call a table value
+false	tests/feature-errors.lua:33: thrown
+false	tests/feature-errors.lua:34: thrown
+false	thrown
+false	direct
+false	nil
+2
+false	table	42
+false	42
+false	tests/feature-errors.lua:44: msg
+false	my msg
+false	assertion failed!
+false	assertion failed!
+1	2	3
+false	bad argument #1 to '?' (value expected)
+3
+false	tests/feature-errors.lua:56: bad argument #1 to 'r' (string expected, got no value)
+false	tests/feature-errors.lua:57: bad argument #1 to 'rep' (number expected, got no value)
+false	tests/feature-errors.lua:58: bad argument #1 to 'rep' (string expected, got no value)
+false	bad argument #1 to '?' (string expected, got no value)
+false	tests/feature-errors.lua:60: bad argument #1 to 'floor' (number expected, got string)
+false	tests/feature-errors.lua:61: bad argument #1 to 'setmetatable' (table expected, got number)
+false	tests/feature-errors.lua:62: bad argument #1 to '(for generator)' (table expected, got nil)
+false	bad argument #2 to '?' (number expected, got string)
+false	tests/feature-errors.lua:64: attempt to call method 'bad' (a nil value)
+false	tests/feature-errors.lua:65: bad argument #1 to 'insert' (table expected, got nil)
+false	tests/feature-errors.lua:66: bad argument #1 to 'sub' (number expected, got table)
+true	1	2	3
+true
+true	false	inner
+false	rethrown: first
+false	handled: tests/feature-errors.lua:76: x
+true	fine	2
+false	TESTS/FEATURE-ERRORS.LUA:78: ATTEMPT TO INDEX LOCAL 'Z' (A NIL VALUE)
+false	tests/feature-errors.lua:81: no field foo
+false	tests/feature-errors.lua:83: in comparator
+false	tests/feature-errors.lua:84: in gsub a
+count	2
+true	value 7
+false	tests/feature-errors.lua:95: missing
+err,err,err
+done

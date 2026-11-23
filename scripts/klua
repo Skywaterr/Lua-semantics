@@ -2,14 +2,23 @@
 # Run a Lua program with the K semantics, or only parse it.
 #
 #   scripts/klua FILE.lua           run it; program output on stdout. If the
-#                                   run does not finish, exits non-zero and
-#                                   prints the final configuration on stderr
+#                                   run does not finish (an uncaught error,
+#                                   or stuck), exits non-zero and prints the
+#                                   final configuration on stderr
 #   scripts/klua --parse FILE.lua   parse it; prints nothing on success
+#
+# This calls the kompiled definition's Bison parser and interpreter directly
+# (llvm-krun), which takes a fraction of a second, instead of going through
+# the Java krun frontend, which takes several. The definition must be built
+# with --gen-glr-bison-parser (make kompile does that).
 #
 # Lua strings are byte strings, but K reads source files as UTF-8 and fails
 # on other bytes (tests/life.lua has some). The source is recoded from
 # Latin-1, so every byte becomes exactly one character, and the program's
 # output is recoded back, so byte values survive the round trip.
+#
+# The script name given here becomes arg[0] and the chunk name in error
+# messages ("tests/x.lua:12: ...").
 #
 # Set KOMPILED to use a definition other than src/lua-kompiled.
 
@@ -36,15 +45,20 @@ iconv -f latin1 -t utf-8 "$src" > "$input"
 
 status=0
 if [ $mode = parse ]; then
-    kast --definition "$def" --output kore "$input" > /dev/null 2> "$tmp/err" || status=$?
+    "$def/parser_PGM" "$input" > /dev/null 2> "$tmp/err" || status=$?
 else
-    krun --definition "$def" --output pretty --output-file "$tmp/config" \
-        -cARGS="\"$src\"" "$input" > "$tmp/out" 2> "$tmp/err" || status=$?
+    # $ARGS as a KORE string literal: escape backslashes and quotes.
+    args=$(printf '%s' "$src" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
+    llvm-krun -d "$def" -o "$tmp/config.kore" \
+        -c PGM "$input" Block prettyfile \
+        -c ARGS "\\dv{SortString{}}(\"$args\")" String kore \
+        -c IO '\dv{SortString{}}("on")' String kore \
+        > "$tmp/out" 2> "$tmp/err" || status=$?
     iconv -f utf-8 -t latin1 "$tmp/out"
-    # A run that did not finish (stuck, or an error): show where it stopped.
-    if [ $status -ne 0 ] && [ -s "$tmp/config" ]; then
+    # A run that did not finish (an error, or stuck): show where it stopped.
+    if [ $status -ne 0 ] && [ -s "$tmp/config.kore" ]; then
         printf '\n--- final configuration (exit %s) ---\n' $status >> "$tmp/err"
-        cat "$tmp/config" >> "$tmp/err"
+        kore-print --definition "$def" --output pretty "$tmp/config.kore" >> "$tmp/err" 2>&1 || true
     fi
 fi
 

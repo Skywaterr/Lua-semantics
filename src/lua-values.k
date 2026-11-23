@@ -59,6 +59,12 @@ module LUA-VALUES
   rule #truncInt(F) => Float2Int(truncFloat(F)) requires notBool isNaN(F) andBool notBool isInfinite(F)
   rule #truncInt(_) => 0 [owise]
 
+  // The type name of a list's first value, "no value" if it is empty
+  // (luaL_typerror's wording for a missing argument).
+  syntax String ::= #typeOrNone(List) [function, total]
+  rule #typeOrNone(ListItem(V:Val) _) => #type(V)
+  rule #typeOrNone(_) => "no value" [owise]
+
   syntax Bool ::= #isCall(K) [function, total]
   rule #isCall(_:FunctionCall) => true
   rule #isCall(_) => false [owise]

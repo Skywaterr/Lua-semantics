@@ -32,31 +32,34 @@ module LUA-EVAL
   rule <k> G:Val ~> #setIndexK(K, V) => #setIndex(G, K, V) ...</k>
 
   // ------------------------------------------------------ desugaring
-  syntax Exp ::= #bin(String, Exp, Exp) [seqstrict]
-               | #un(String, Exp)       [strict]
-               | #and(Exp, Exp)         [strict(1)]
-               | #or(Exp, Exp)          [strict(1)]
-               | #idx(Exp, Exp)         [seqstrict]
+  // Each operator form also carries its operands' source expressions
+  // (never evaluated), so that an error can name the variable involved:
+  // "attempt to index global 'x' (a nil value)" (ldebug.c getobjname).
+  syntax Exp ::= #bin(String, Exp, Exp, K, K) [seqstrict(2, 3)]
+               | #un(String, Exp, K)          [strict(2)]
+               | #and(Exp, Exp)               [strict(1)]
+               | #or(Exp, Exp)                [strict(1)]
+               | #idx(Exp, Exp, K)            [seqstrict(1, 2)]
 
-  rule <k> A + B   => #bin("+", A, B)  ...</k>
-  rule <k> A - B   => #bin("-", A, B)  ...</k>
-  rule <k> A * B   => #bin("*", A, B)  ...</k>
-  rule <k> A / B   => #bin("/", A, B)  ...</k>
-  rule <k> A % B   => #bin("%", A, B)  ...</k>
-  rule <k> A ^ B   => #bin("^", A, B)  ...</k>
-  rule <k> A ^ - B   => #bin("^", A, #un("-", B))   ...</k>
-  rule <k> A ^ not B => #bin("^", A, #un("not", B)) ...</k>
-  rule <k> A ^ # B   => #bin("^", A, #un("#", B))   ...</k>
-  rule <k> A .. B  => #bin("..", A, B) ...</k>
-  rule <k> A == B  => #bin("==", A, B) ...</k>
-  rule <k> A ~= B  => #bin("~=", A, B) ...</k>
-  rule <k> A < B   => #bin("<", A, B)  ...</k>
-  rule <k> A <= B  => #bin("<=", A, B) ...</k>
-  rule <k> A > B   => #bin(">", A, B)  ...</k>
-  rule <k> A >= B  => #bin(">=", A, B) ...</k>
-  rule <k> - A     => #un("-", A)      ...</k>
-  rule <k> not A   => #un("not", A)    ...</k>
-  rule <k> # A     => #un("#", A)      ...</k>
+  rule <k> A + B   => #bin("+", A, B, A, B)  ...</k>
+  rule <k> A - B   => #bin("-", A, B, A, B)  ...</k>
+  rule <k> A * B   => #bin("*", A, B, A, B)  ...</k>
+  rule <k> A / B   => #bin("/", A, B, A, B)  ...</k>
+  rule <k> A % B   => #bin("%", A, B, A, B)  ...</k>
+  rule <k> A ^ B   => #bin("^", A, B, A, B)  ...</k>
+  rule <k> A ^ - B   => #bin("^", A, #un("-", B, B), A, .K)   ...</k>
+  rule <k> A ^ not B => #bin("^", A, #un("not", B, B), A, .K) ...</k>
+  rule <k> A ^ # B   => #bin("^", A, #un("#", B, B), A, .K)   ...</k>
+  rule <k> A .. B  => #bin("..", A, B, A, B) ...</k>
+  rule <k> A == B  => #bin("==", A, B, A, B) ...</k>
+  rule <k> A ~= B  => #bin("~=", A, B, A, B) ...</k>
+  rule <k> A < B   => #bin("<", A, B, A, B)  ...</k>
+  rule <k> A <= B  => #bin("<=", A, B, A, B) ...</k>
+  rule <k> A > B   => #bin(">", A, B, A, B)  ...</k>
+  rule <k> A >= B  => #bin(">=", A, B, A, B) ...</k>
+  rule <k> - A     => #un("-", A, A)      ...</k>
+  rule <k> not A   => #un("not", A, A)    ...</k>
+  rule <k> # A     => #un("#", A, A)      ...</k>
   rule <k> A and B => #and(A, B) ...</k>
   rule <k> A or B  => #or(A, B)  ...</k>
 
@@ -65,11 +68,50 @@ module LUA-EVAL
   // K's own grouping brackets.)
   rule <k> ( E:Exp ):PPrefix => E ...</k>
 
-  rule <k> P:NPrefix [ K:Exp ]   => #idx(P, K) ...</k>
-  rule <k> P:PPrefix [ K:Exp ]   => #idx(P, K) ...</k>
-  rule <k> P:NPrefix . N:Name    => #idx(P, Name2String(N)) ...</k>
-  rule <k> P:PPrefix . N:Name    => #idx(P, Name2String(N)) ...</k>
-  rule <k> #idx(T:Val, K:Val) => #index(T, K) ...</k>
+  rule <k> P:NPrefix [ K:Exp ]   => #idx(P, K, P) ...</k>
+  rule <k> P:PPrefix [ K:Exp ]   => #idx(P, K, P) ...</k>
+  rule <k> P:NPrefix . N:Name    => #idx(P, Name2String(N), P) ...</k>
+  rule <k> P:PPrefix . N:Name    => #idx(P, Name2String(N), P) ...</k>
+  // fast path: a field that is present
+  rule <k> #idx(tref(T), K:Val, _) => #rawget(M, K) ...</k> <tables> ... T |-> #tbl(M, _, _) ... </tables>
+    requires #rawget(M, K) =/=K nil [priority(40)]
+  rule <k> #idx(T:Val, K:Val, E) => #index(T, K) ~> #idxCtx(E) ...</k>
+  syntax KItem ::= #idxCtx(K)
+  rule <k> V:Val ~> #idxCtx(_) => V ...</k>
+  // Indexing something that cannot be indexed names the indexed expression.
+  rule <k> nil ~> #gtTM(V, _, 0, false) ~> #idxCtx(E) => #typeError(V, "index", E) ...</k> [priority(40)]
+
+  // ------------------------------------------------------ error messages
+  // luaG_typeerror: "attempt to OP KIND 'NAME' (a TYPE value)" when the
+  // operand is a variable or field, "attempt to OP a TYPE value" otherwise.
+  syntax KItem ::= #typeError(Val, String, K) | #describe(K) | #typeErrorMsg(Val, String)
+  rule <k> #typeError(V, Op, E) => #describe(E) ~> #typeErrorMsg(V, Op) ...</k>
+  rule <k> D:String ~> #typeErrorMsg(V, Op) => #rtError("attempt to " +String Op +String " a " +String #type(V) +String " value") ...</k>
+    requires D ==String ""
+  rule <k> D:String ~> #typeErrorMsg(V, Op)
+        => #rtError("attempt to " +String Op +String " " +String D +String " (a " +String #type(V) +String " value)") ...</k>
+    requires D =/=String ""
+
+  // getobjname: a global, a local of the running function, an upvalue (a
+  // local of an enclosing function, i.e. one the closure captured), a field
+  // with a constant string key ('?' for other keys), or a method.
+  rule <k> #describe(X:Name) => "global '" +String Name2String(X) +String "'" ...</k>
+       <env> Env </env>
+    requires notBool X in_keys(Env)
+  rule <k> #describe(X:Name) => #if X in_keys(CEnv) andBool CEnv [ X ] ==K L
+                                #then "upvalue '" #else "local '" #fi +String Name2String(X) +String "'" ...</k>
+       <env> ... X |-> L ... </env>
+       <callStack> ListItem(#frame(closure(I), _, _, _)) ... </callStack>
+       <funcs> ... I |-> #fun(_, _, _, _, CEnv, _) ... </funcs>
+  rule <k> #describe(_:NPrefix . N:Name) => "field '" +String Name2String(N) +String "'" ...</k>
+  rule <k> #describe(_:PPrefix . N:Name) => "field '" +String Name2String(N) +String "'" ...</k>
+  rule <k> #describe(_:NPrefix [ S:LString ]) => "field '" +String #decodeLString(LString2String(S)) +String "'" ...</k>
+  rule <k> #describe(_:PPrefix [ S:LString ]) => "field '" +String #decodeLString(LString2String(S)) +String "'" ...</k>
+  rule <k> #describe(_:NPrefix [ E:Exp ]) => "field '?'" ...</k> requires notBool isLString(E)
+  rule <k> #describe(_:PPrefix [ E:Exp ]) => "field '?'" ...</k> requires notBool isLString(E)
+  rule <k> #describe(( E:Exp ):PPrefix) => #describe(E) ...</k>
+  rule <k> #describe(#method(N)) => "method '" +String N +String "'" ...</k>
+  rule <k> #describe(_) => "" ...</k> [owise]
 
   // ------------------------------------------------------ arithmetic
   syntax Bool ::= #isArith(String) [function, total]
@@ -80,9 +122,11 @@ module LUA-EVAL
   // event's metamethod of the first operand, else of the second, is called
   // (call_binTM). Without one Lua blames the first operand that does not
   // convert.
-  rule <k> #bin(Op, A:Val, B:Val) => #arithF(Op, {#tonumber(A)}:>Float, {#tonumber(B)}:>Float) ...</k>
+  rule <k> #bin(Op, A:Val, B:Val, _, _) => #arithF(Op, {#tonumber(A)}:>Float, {#tonumber(B)}:>Float) ...</k>
     requires #isArith(Op) andBool #tonumber(A) =/=K nil andBool #tonumber(B) =/=K nil
-  rule <k> #bin(Op, A:Val, B:Val) => #binTM(#event(Op), A, B, #arithError(#if #tonumber(A) ==K nil #then A #else B #fi)) ...</k>
+  rule <k> #bin(Op, A:Val, B:Val, EA, EB)
+        => #binTM(#event(Op), A, B, #if #tonumber(A) ==K nil #then #typeError(A, "perform arithmetic on", EA)
+                                    #else #typeError(B, "perform arithmetic on", EB) #fi) ...</k>
     requires #isArith(Op) andBool (#tonumber(A) ==K nil orBool #tonumber(B) ==K nil)
 
   syntax String ::= #event(String) [function, total]
@@ -99,9 +143,6 @@ module LUA-EVAL
   rule <k> nil ~> #binTMCall(_, _, Err) => Err ...</k>
   rule <k> H:Val ~> #binTMCall(A, B, _) => #apply(H, ListItem(A) ListItem(B)) ~> #first ...</k> requires H =/=K nil
 
-  syntax KItem ::= #arithError(Val)
-  rule <k> #arithError(V) => #error("attempt to perform arithmetic on a " +String #type(V) +String " value") ...</k>
-
   syntax Float ::= #arithF(String, Float, Float) [function, total]
   rule #arithF("+", X, Y) => X +Float Y
   rule #arithF("-", X, Y) => X -Float Y
@@ -111,18 +152,19 @@ module LUA-EVAL
   rule #arithF("^", X, Y) => X ^Float Y
   rule #arithF(_, _, _) => NaN [owise]
 
-  rule <k> #un("-", A:Val) => --Float {#tonumber(A)}:>Float ...</k> requires #tonumber(A) =/=K nil
-  rule <k> #un("-", A:Val) => #binTM("__unm", A, A, #arithError(A)) ...</k> requires #tonumber(A) ==K nil
+  rule <k> #un("-", A:Val, _) => --Float {#tonumber(A)}:>Float ...</k> requires #tonumber(A) =/=K nil
+  rule <k> #un("-", A:Val, E) => #binTM("__unm", A, A, #typeError(A, "perform arithmetic on", E)) ...</k>
+    requires #tonumber(A) ==K nil
 
   // ------------------------------------------------------ comparison
   // ==: different types are never equal; two different tables are equal if
   // they share an __eq metamethod (the same one in both metatables) that
   // says so (luaV_equalval, get_compTM).
-  rule <k> #bin("==", A:Val, B:Val) => #rawEq(A, B) ...</k>
+  rule <k> #bin("==", A:Val, B:Val, _, _) => #rawEq(A, B) ...</k>
     requires notBool (isTRef(A) andBool isTRef(B) andBool A =/=K B)
-  rule <k> #bin("==", tref(A), tref(B)) => #metaOf(tref(A)) ~> #eq1(tref(A), tref(B)) ...</k>
+  rule <k> #bin("==", tref(A), tref(B), _, _) => #metaOf(tref(A)) ~> #eq1(tref(A), tref(B)) ...</k>
     requires A =/=Int B
-  rule <k> #bin("~=", A:Val, B:Val) => #bin("==", A, B) ~> #not ...</k>
+  rule <k> #bin("~=", A:Val, B:Val, EA, EB) => #bin("==", A, B, EA, EB) ~> #not ...</k>
   syntax KItem ::= "#not" | #eq1(Val, Val) | #eq2(Val, Val, Val) | #eq3(Val, Val, Val, Val) | #eq4(Val, Val, Val)
                  | #callBool(Val, Val, Val)
   rule <k> V:Val ~> #not => notBool #truthy(V) ...</k>
@@ -136,20 +178,20 @@ module LUA-EVAL
   rule <k> H2:Val ~> #eq4(H, _, _) => false ...</k> requires H2 ==K nil orBool notBool #rawEq(H, H2)
   // A metamethod's first result, as a boolean.
   rule <k> #callBool(H, A, B) => #apply(H, ListItem(A) ListItem(B)) ~> #first ~> #not ~> #not ...</k>
-  rule <k> #bin("<",  A:Float, B:Float)   => A <Float B ...</k>
-  rule <k> #bin("<",  A:String, B:String) => A <String B ...</k>
-  rule <k> #bin("<=", A:Float, B:Float)   => A <=Float B ...</k>
-  rule <k> #bin("<=", A:String, B:String) => A <String B orBool A ==String B ...</k>
-  rule <k> #bin(">",  A:Val, B:Val) => #bin("<",  B, A) ...</k>
-  rule <k> #bin(">=", A:Val, B:Val) => #bin("<=", B, A) ...</k>
+  rule <k> #bin("<",  A:Float, B:Float, _, _)   => A <Float B ...</k>
+  rule <k> #bin("<",  A:String, B:String, _, _) => A <String B ...</k>
+  rule <k> #bin("<=", A:Float, B:Float, _, _)   => A <=Float B ...</k>
+  rule <k> #bin("<=", A:String, B:String, _, _) => A <String B orBool A ==String B ...</k>
+  rule <k> #bin(">",  A:Val, B:Val, EA, EB) => #bin("<",  B, A, EB, EA) ...</k>
+  rule <k> #bin(">=", A:Val, B:Val, EA, EB) => #bin("<=", B, A, EB, EA) ...</k>
   // Other operands of the same type: call_orderTM needs the same __lt
   // (or __le) metamethod in both; `a <= b` falls back to `not (b < a)`.
   // Operands of different types are always an error (luaV_lessthan).
-  rule <k> #bin(Op, A:Val, B:Val) => #compareError(A, B) ...</k>
+  rule <k> #bin(Op, A:Val, B:Val, _, _) => #compareError(A, B) ...</k>
     requires (Op ==String "<" orBool Op ==String "<=") andBool #type(A) =/=String #type(B)
-  rule <k> #bin("<", A:Val, B:Val) => #orderTM(A, B, "__lt", #compareError(A, B)) ...</k>
+  rule <k> #bin("<", A:Val, B:Val, _, _) => #orderTM(A, B, "__lt", #compareError(A, B)) ...</k>
     requires #type(A) ==String #type(B) andBool notBool #isNumOrStr(A)
-  rule <k> #bin("<=", A:Val, B:Val) => #orderTM(A, B, "__le", #orderTM(B, A, "__lt", #compareError(A, B)) ~> #not) ...</k>
+  rule <k> #bin("<=", A:Val, B:Val, _, _) => #orderTM(A, B, "__le", #orderTM(B, A, "__lt", #compareError(A, B)) ~> #not) ...</k>
     requires #type(A) ==String #type(B) andBool notBool #isNumOrStr(A)
 
   syntax KItem ::= #orderTM(Val, Val, String, K) | #orderTM2(Val, Val, String, K) | #orderTM3(Val, Val, Val, K)
@@ -165,28 +207,29 @@ module LUA-EVAL
   rule #isNumOrStr(_:String) => true
   rule #isNumOrStr(_) => false [owise]
 
+  // luaG_ordererror: no variable names.
   syntax KItem ::= #compareError(Val, Val)
-  rule <k> #compareError(A, B) => #error("attempt to compare two " +String #type(A) +String " values") ...</k>
+  rule <k> #compareError(A, B) => #rtError("attempt to compare two " +String #type(A) +String " values") ...</k>
     requires #type(A) ==String #type(B)
-  rule <k> #compareError(A, B) => #error("attempt to compare " +String #type(A) +String " with " +String #type(B)) ...</k>
+  rule <k> #compareError(A, B) => #rtError("attempt to compare " +String #type(A) +String " with " +String #type(B)) ...</k>
     [owise]
 
   // ------------------------------------------------------ concatenation
-  rule <k> #bin("..", A:Val, B:Val) => {#tostringCoerce(A)}:>String +String {#tostringCoerce(B)}:>String ...</k>
+  rule <k> #bin("..", A:Val, B:Val, _, _) => {#tostringCoerce(A)}:>String +String {#tostringCoerce(B)}:>String ...</k>
     requires #tostringCoerce(A) =/=K nil andBool #tostringCoerce(B) =/=K nil
   // Otherwise __concat (call_binTM); without one Lua blames the first
   // operand that is not a string or number.
-  rule <k> #bin("..", A:Val, B:Val)
-        => #binTM("__concat", A, B, #error("attempt to concatenate a "
-             +String #type(#if #tostringCoerce(A) ==K nil #then A #else B #fi) +String " value")) ...</k>
+  rule <k> #bin("..", A:Val, B:Val, EA, EB)
+        => #binTM("__concat", A, B, #if #tostringCoerce(A) ==K nil #then #typeError(A, "concatenate", EA)
+                                    #else #typeError(B, "concatenate", EB) #fi) ...</k>
     requires #tostringCoerce(A) ==K nil orBool #tostringCoerce(B) ==K nil
 
   // ------------------------------------------------------ not, #, and, or
-  rule <k> #un("not", A:Val) => notBool #truthy(A) ...</k>
-  rule <k> #un("#", S:String) => Int2Float(lengthString(S), 53, 11) ...</k>
-  rule <k> #un("#", tref(T)) => #lenF(M, A) ...</k> <tables> ... T |-> #tbl(M, A, _) ... </tables>
-  rule <k> #un("#", V:Val) => #error("attempt to get length of a " +String #type(V) +String " value") ...</k>
-    [owise]
+  rule <k> #un("not", A:Val, _) => notBool #truthy(A) ...</k>
+  rule <k> #un("#", S:String, _) => Int2Float(lengthString(S), 53, 11) ...</k>
+  rule <k> #un("#", tref(T), _) => #lenF(M, A) ...</k> <tables> ... T |-> #tbl(M, A, _) ... </tables>
+  rule <k> #un("#", V:Val, E) => #typeError(V, "get length of", E) ...</k>
+    requires notBool (isString(V) orBool isTRef(V))
 
   // The second operand is evaluated in place, so it is a single value too.
   rule <k> #and(V:Val, B) => B ...</k> requires #truthy(V)
@@ -202,30 +245,43 @@ module LUA-EVAL
   rule <k> #vals(L) ~> #first => #head(L) ...</k>
   rule <k> #vals(_) ~> #discard => .K ...</k>
 
-  syntax KItem ::= #callArgs(Args) | #methodArgs(String, Args) | #methodFn(Val, Args)
-                 | #applyTo(Val) | #prepend(Val)
-  rule <k> #call(P:NPrefix A:Args) => P ~> #callArgs(A) ...</k>
-  rule <k> #call(P:PPrefix A:Args) => P ~> #callArgs(A) ...</k>
-  rule <k> #call(P:NPrefix : N:Name A:Args) => P ~> #methodArgs(Name2String(N), A) ...</k>
-  rule <k> #call(P:PPrefix : N:Name A:Args) => P ~> #methodArgs(Name2String(N), A) ...</k>
+  // The function's source expression travels along for error messages.
+  syntax KItem ::= #callArgs(Args, K) | #methodArgs(String, Args, K) | #methodFn(Val, Args, String)
+                 | #applyTo(Val, K) | #prepend(Val)
+  rule <k> #call(P:NPrefix A:Args) => P ~> #callArgs(A, P) ...</k>
+  rule <k> #call(P:PPrefix A:Args) => P ~> #callArgs(A, P) ...</k>
+  rule <k> #call(P:NPrefix : N:Name A:Args) => P ~> #methodArgs(Name2String(N), A, P) ...</k>
+  rule <k> #call(P:PPrefix : N:Name A:Args) => P ~> #methodArgs(Name2String(N), A, P) ...</k>
 
-  rule <k> F:Val ~> #callArgs(A) => #args(A) ~> #applyTo(F) ...</k>
+  rule <k> F:Val ~> #callArgs(A, E) => #args(A) ~> #applyTo(F, E) ...</k>
   // o:m(...) evaluates o once and passes it as the first argument.
-  rule <k> O:Val ~> #methodArgs(N, A) => #index(O, N) ~> #methodFn(O, A) ...</k>
-  rule <k> F:Val ~> #methodFn(O, A) => #args(A) ~> #prepend(O) ~> #applyTo(F) ...</k>
+  rule <k> O:Val ~> #methodArgs(N, A, E) => #index(O, N) ~> #idxCtx(E) ~> #methodFn(O, A, N) ...</k>
+  rule <k> F:Val ~> #methodFn(O, A, N) => #args(A) ~> #prepend(O) ~> #applyTo(F, #method(N)) ...</k>
   rule <k> #vals(L) ~> #prepend(O) => #vals(ListItem(O) L) ...</k>
-  rule <k> #vals(L) ~> #applyTo(F) => #apply(F, L) ...</k>
-
-  // Library functions are defined in LUA-STDLIB, Lua functions in
-  // LUA-FUNCTION. Calling anything else uses its __call metamethod, which
-  // gets the called value as an extra first argument (tryfuncTM). (Not
-  // [owise]: library rules use owise among themselves.)
-  syntax KItem ::= #callTM(Val, List)
-  rule <k> #apply(F, Args) => #getTM(F, "__call") ~> #callTM(F, Args) ...</k>
+  rule <k> #vals(L) ~> #applyTo(F, E) => #applyE(F, L, E) ...</k> requires #type(F) ==String "function"
+  rule <k> #vals(L) ~> #applyTo(F, E) => #getTM(F, "__call") ~> #callTM(F, L, E) ...</k>
     requires #type(F) =/=String "function"
-  rule <k> H:Val ~> #callTM(F, Args) => #apply(H, ListItem(F) Args) ...</k> requires #type(H) ==String "function"
-  rule <k> H:Val ~> #callTM(F, _) => #error("attempt to call a " +String #type(F) +String " value") ...</k>
+
+  // Lua functions are applied in LUA-FUNCTION. A library function runs in
+  // a frame of its own on <callStack> (as a C function has a CallInfo), so
+  // error positions and stack levels count it; its rules match #applyB.
+  // Calling anything else uses its __call metamethod, which gets the called
+  // value as an extra first argument (tryfuncTM). (Not [owise]: library
+  // rules use owise among themselves.)
+  syntax KItem ::= #callTM(Val, List, K) | #pushC(Val, K) | "#popC"
+  rule <k> #applyE(F, Args, E) => #pushC(F, E) ~> #applyB(F, Args) ~> #popC ...</k> requires #isLibFn(F)
+  rule <k> #pushC(F, E) => .K ...</k> <callStack> S => ListItem(#frame(F, 0, -1, E)) S </callStack>
+  rule <k> #vals(R) ~> #popC => #vals(R) ...</k> <callStack> ListItem(_) S => S </callStack>
+  rule <k> #applyE(F, Args, _) => #getTM(F, "__call") ~> #callTM(F, Args, .K) ...</k>
+    requires #type(F) =/=String "function"
+  rule <k> H:Val ~> #callTM(F, Args, _) => #apply(H, ListItem(F) Args) ...</k> requires #type(H) ==String "function"
+  rule <k> H:Val ~> #callTM(F, _, E) => #typeError(F, "call", E) ...</k>
     requires #type(H) =/=String "function"
+
+  syntax Bool ::= #isLibFn(Val) [function, total]
+  rule #isLibFn(builtin(_)) => true
+  rule #isLibFn(gmatchIter(_)) => true
+  rule #isLibFn(_) => false [owise]
 
   syntax KItem ::= #args(Args)
   rule <k> #args(( Es:Exps ):Args) => #evalList(#exps2list(Es)) ...</k>
@@ -304,7 +360,17 @@ module LUA-EVAL
 
   // ======================================================= statements
 
-  syntax KItem ::= #exec(K) | #last(LastStmt)
+  syntax KItem ::= #exec(K) | #last(LastStmt) | #setLine(Int)
+
+  // Statements carry their source position (the Bison parser's [locations]);
+  // running one records its line in the current frame, which error
+  // messages and debug.getinfo read.
+  // (#location is sort-parametric; the sorts pick the instances the parser
+  // produces.)
+  rule <k> #exec(#location(S:Stmt, _, L, _, _, _)) => #setLine(L) ~> #exec(S) ...</k>
+  rule <k> #exec(#location(S:PStmt, _, L, _, _, _)) => #setLine(L) ~> #exec(S) ...</k>
+  rule <k> #last(#location(S:LastStmt, _, L, _, _, _)) => #setLine(L) ~> #last(S) ...</k>
+  rule <k> #setLine(L) => .K ...</k> <callStack> ListItem(#frame(_, _, (_ => L), _)) ... </callStack>
 
   rule <k> #exec((;):Stmt) => .K ...</k>
   rule <k> #exec(; P:PStmt) => #exec(P) ...</k>
@@ -320,21 +386,21 @@ module LUA-EVAL
   rule <k> #exec(V:PVar = Es:NeExps) => #assign(ListItem(V), Es) ...</k>
   rule <k> #exec(V:PVar , Vs:Vars = Es:NeExps) => #assign(ListItem(V) #vars2list(Vs), Es) ...</k>
 
-  syntax LValue ::= #lvName(Name) | #lvIdx(Val, Val)
-  syntax KItem ::= #assign(List, NeExps) | #lvals(List, List, NeExps) | #lvIdxK(List, List, NeExps)
+  syntax LValue ::= #lvName(Name) | #lvIdx(Val, Val, K)
+  syntax KItem ::= #assign(List, NeExps) | #lvals(List, List, NeExps) | #lvIdxK(List, List, NeExps, K)
                  | #storeAll(List) | #storeRev(List, List) | #storeOne(LValue, Val)
   rule <k> #assign(Ts, Es) => #lvals(Ts, .List, Es) ...</k>
   rule <k> #lvals(ListItem(X:Name) Ts, Acc, Es) => #lvals(Ts, Acc ListItem(#lvName(X)), Es) ...</k>
   rule <k> #lvals(ListItem(P:NPrefix [ K:Exp ]) Ts, Acc, Es)
-        => #evalSingles(ListItem(P) ListItem(K)) ~> #lvIdxK(Ts, Acc, Es) ...</k>
+        => #evalSingles(ListItem(P) ListItem(K)) ~> #lvIdxK(Ts, Acc, Es, P) ...</k>
   rule <k> #lvals(ListItem(P:PPrefix [ K:Exp ]) Ts, Acc, Es)
-        => #evalSingles(ListItem(P) ListItem(K)) ~> #lvIdxK(Ts, Acc, Es) ...</k>
+        => #evalSingles(ListItem(P) ListItem(K)) ~> #lvIdxK(Ts, Acc, Es, P) ...</k>
   rule <k> #lvals(ListItem(P:NPrefix . N:Name) Ts, Acc, Es)
-        => #evalSingles(ListItem(P) ListItem(Name2String(N))) ~> #lvIdxK(Ts, Acc, Es) ...</k>
+        => #evalSingles(ListItem(P) ListItem(Name2String(N))) ~> #lvIdxK(Ts, Acc, Es, P) ...</k>
   rule <k> #lvals(ListItem(P:PPrefix . N:Name) Ts, Acc, Es)
-        => #evalSingles(ListItem(P) ListItem(Name2String(N))) ~> #lvIdxK(Ts, Acc, Es) ...</k>
-  rule <k> #vals(ListItem(T:Val) ListItem(K:Val)) ~> #lvIdxK(Ts, Acc, Es)
-        => #lvals(Ts, Acc ListItem(#lvIdx(T, K)), Es) ...</k>
+        => #evalSingles(ListItem(P) ListItem(Name2String(N))) ~> #lvIdxK(Ts, Acc, Es, P) ...</k>
+  rule <k> #vals(ListItem(T:Val) ListItem(K:Val)) ~> #lvIdxK(Ts, Acc, Es, E)
+        => #lvals(Ts, Acc ListItem(#lvIdx(T, K, E)), Es) ...</k>
   rule <k> #lvals(.List, Acc, Es) => #evalList(#neexps2list(Es)) ~> #storeAll(Acc) ...</k>
   rule <k> #vals(Vs) ~> #storeAll(Ts) => #storeRev(Ts, #adjust(Vs, size(Ts))) ...</k>
   rule <k> #storeRev(Ts ListItem(T:LValue), Vs ListItem(V:Val)) => #storeOne(T, V) ~> #storeRev(Ts, Vs) ...</k>
@@ -346,7 +412,11 @@ module LUA-EVAL
   rule <k> #storeOne(#lvName(X), V) => #genv ~> #setIndexK(Name2String(X), V) ...</k>
        <env> Env </env>
     requires notBool X in_keys(Env)
-  rule <k> #storeOne(#lvIdx(T, K), V) => #setIndex(T, K, V) ...</k>
+  // Assigning into something that cannot be indexed names it, as #idx does.
+  rule <k> #storeOne(#lvIdx(T, K, E), V) => #setIndex(T, K, V) ~> #stCtx(E) ...</k>
+  syntax KItem ::= #stCtx(K)
+  rule <k> #stCtx(_) => .K ...</k>
+  rule <k> nil ~> #stTM(T, _, _, 0, false) ~> #stCtx(E) => #typeError(T, "index", E) ...</k> [priority(40)]
 
   // ------------------------------------------------------ local
   // The right-hand side is evaluated before the names come into scope.
@@ -402,9 +472,9 @@ module LUA-EVAL
   rule <k> #vals(ListItem(A:Val) ListItem(L:Val) ListItem(S:Val)) ~> #forPrep(X, B)
         => #forCheck(#tonumber(A), #tonumber(L), #tonumber(S), X, B) ...</k>
   rule <k> #forCheck(A:Float, L:Float, S:Float, X, B) => #forLoop(X, A, L, S, B) ...</k>
-  rule <k> #forCheck(nil, _, _, _, _) => #error("'for' initial value must be a number") ...</k>
-  rule <k> #forCheck(_:Float, nil, _, _, _) => #error("'for' limit must be a number") ...</k>
-  rule <k> #forCheck(_:Float, _:Float, nil, _, _) => #error("'for' step must be a number") ...</k>
+  rule <k> #forCheck(nil, _, _, _, _) => #rtError("'for' initial value must be a number") ...</k>
+  rule <k> #forCheck(_:Float, nil, _, _, _) => #rtError("'for' limit must be a number") ...</k>
+  rule <k> #forCheck(_:Float, _:Float, nil, _, _) => #rtError("'for' step must be a number") ...</k>
   rule <k> #forLoop(X, V, L, S, B) => #forBody(X, V, B) ~> #forLoop(X, V +Float S, L, S, B) ...</k>
     requires (0.0 <Float S andBool V <=Float L) orBool (notBool 0.0 <Float S andBool L <=Float V)
   rule <k> #forLoop(_, _, _, _, _) => .K ...</k> [owise]

@@ -99,33 +99,32 @@ module LUA-TABLE
   rule #nextPair(_, nil) => ListItem(nil)
   rule #nextPair(M, K) => ListItem(K) ListItem(#rawget(M, K)) [owise]
 
-  rule <k> #apply(builtin("next"), ListItem(tref(T)) Rest)
+  rule <k> #applyB(builtin("next"), ListItem(tref(T)) Rest)
         => #vals(#nextPair(M, #nextKey(keys_list(M), #head(Rest), nil))) ...</k>
        <tables> ... T |-> #tbl(M, _, _) ... </tables>
-  rule <k> #apply(builtin("pairs"), ListItem(tref(T)) _)
+  rule <k> #applyB(builtin("pairs"), ListItem(tref(T)) _)
         => #vals(ListItem(builtin("next")) ListItem(tref(T)) ListItem(nil)) ...</k>
-  rule <k> #apply(builtin("ipairs"), ListItem(tref(T)) _)
+  rule <k> #applyB(builtin("ipairs"), ListItem(tref(T)) _)
         => #vals(ListItem(builtin("ipairs.aux")) ListItem(tref(T)) ListItem(0.0)) ...</k>
   // ipairs stops at the first nil, reading t[i] raw.
-  rule <k> #apply(builtin("ipairs.aux"), ListItem(tref(T)) ListItem(I:Float) _)
+  rule <k> #applyB(builtin("ipairs.aux"), ListItem(tref(T)) ListItem(I:Float) _)
         => #vals(#ipairsStep(I +Float 1.0, #rawget(M, I +Float 1.0))) ...</k>
        <tables> ... T |-> #tbl(M, _, _) ... </tables>
   syntax List ::= #ipairsStep(Float, Val) [function, total]
   rule #ipairsStep(_, nil) => .List
   rule #ipairsStep(I, V) => ListItem(I) ListItem(V) [owise]
 
-  rule <k> #apply(builtin(N), ListItem(V:Val) _) => #argError(1, #shortName(N), "table", V) ...</k>
+  rule <k> #applyB(builtin(N), ListItem(V:Val) _) => #argError(1, #shortName(N), "table", V) ...</k>
     requires (N ==String "next" orBool N ==String "pairs" orBool N ==String "ipairs"
               orBool N ==String "table.insert" orBool N ==String "table.remove" orBool N ==String "table.concat"
               orBool N ==String "table.sort" orBool N ==String "table.getn" orBool N ==String "table.maxn"
               orBool N ==String "table.foreach" orBool N ==String "table.foreachi")
      andBool notBool isTRef(V)
 
-  // "bad argument #N to 'f' (T expected, got U)"
+  // "bad argument #N to 'f' (T expected, got U)"; the name comes from the
+  // call site (#badArg), the second argument is only documentation.
   syntax KItem ::= #argError(Int, String, String, Val)
-  rule <k> #argError(I, F, Want, V)
-        => #error("bad argument #" +String Int2String(I) +String " to '" +String F +String "' ("
-                  +String Want +String " expected, got " +String #type(V) +String ")") ...</k>
+  rule <k> #argError(I, _, Want, V) => #badArg(I, Want +String " expected, got " +String #type(V)) ...</k>
 
   syntax String ::= #shortName(String) [function, total]
   rule #shortName(N) => substrString(N, findString(N, ".", 0) +Int 1, lengthString(N))
@@ -146,12 +145,12 @@ module LUA-TABLE
          "setn"     |-> builtin("table.setn")
          "sort"     |-> builtin("table.sort")
 
-  rule <k> #apply(builtin("table.getn"), ListItem(tref(T)) _) => #vals(ListItem(#lenF(M, A))) ...</k>
+  rule <k> #applyB(builtin("table.getn"), ListItem(tref(T)) _) => #vals(ListItem(#lenF(M, A))) ...</k>
        <tables> ... T |-> #tbl(M, A, _) ... </tables>
-  rule <k> #apply(builtin("table.setn"), _) => #error("'setn' is obsolete") ...</k>
+  rule <k> #applyB(builtin("table.setn"), _) => #error("'setn' is obsolete") ...</k>
 
   // Largest positive numeric key (any number, not only integers).
-  rule <k> #apply(builtin("table.maxn"), ListItem(tref(T)) _) => #vals(ListItem(#maxn(keys_list(M), 0.0))) ...</k>
+  rule <k> #applyB(builtin("table.maxn"), ListItem(tref(T)) _) => #vals(ListItem(#maxn(keys_list(M), 0.0))) ...</k>
        <tables> ... T |-> #tbl(M, _, _) ... </tables>
   syntax Float ::= #maxn(List, Float) [function, total]
   rule #maxn(ListItem(K:Float) L, Max) => #maxn(L, K) requires K >Float Max
@@ -161,11 +160,11 @@ module LUA-TABLE
   // ------------------------------------------------------------ insert
   // insert(t, v) appends at #t + 1; insert(t, pos, v) shifts t[pos..] up.
   syntax KItem ::= #tinsert(Int, Val, Val)
-  rule <k> #apply(builtin("table.insert"), ListItem(tref(T)) ListItem(V:Val)) => #vals(.List) ...</k>
+  rule <k> #applyB(builtin("table.insert"), ListItem(tref(T)) ListItem(V:Val)) => #vals(.List) ...</k>
        <tables> ... T |-> #tbl((M => #rawset(M, #ik(#border(M, A) +Int 1), V)), A, _) ... </tables>
-  rule <k> #apply(builtin("table.insert"), ListItem(tref(T)) ListItem(P:Val) ListItem(V:Val))
+  rule <k> #applyB(builtin("table.insert"), ListItem(tref(T)) ListItem(P:Val) ListItem(V:Val))
         => #tinsert(T, #tonumber(P), V) ...</k>
-  rule <k> #apply(builtin("table.insert"), ListItem(tref(_)) Rest) => #error("wrong number of arguments to 'insert'") ...</k>
+  rule <k> #applyB(builtin("table.insert"), ListItem(tref(_)) Rest) => #error("wrong number of arguments to 'insert'") ...</k>
     requires size(Rest) <Int 1 orBool size(Rest) >Int 2
   rule <k> #tinsert(T, P:Float, V) => #vals(.List) ...</k>
        <tables> ... T |-> #tbl((M => #rawset(#shiftUp(M, maxInt(#border(M, A) +Int 1, #truncInt(P)), #truncInt(P)), #ik(#truncInt(P)), V)), A, _) ... </tables>
@@ -180,9 +179,9 @@ module LUA-TABLE
   // remove(t [, pos]) returns t[pos] (default #t) and shifts the rest down;
   // a position outside 1..#t removes nothing and returns nothing.
   syntax KItem ::= #tremove(Int, Map, Int, Int)
-  rule <k> #apply(builtin("table.remove"), ListItem(tref(T))) => #tremove(T, M, #border(M, A), #border(M, A)) ...</k>
+  rule <k> #applyB(builtin("table.remove"), ListItem(tref(T))) => #tremove(T, M, #border(M, A), #border(M, A)) ...</k>
        <tables> ... T |-> #tbl(M, A, _) ... </tables>
-  rule <k> #apply(builtin("table.remove"), ListItem(tref(T)) ListItem(P:Float) _)
+  rule <k> #applyB(builtin("table.remove"), ListItem(tref(T)) ListItem(P:Float) _)
         => #tremove(T, M, #border(M, A), #truncInt(P)) ...</k>
        <tables> ... T |-> #tbl(M, A, _) ... </tables>
   rule <k> #tremove(_, _, E, P) => #vals(.List) ...</k> requires notBool (1 <=Int P andBool P <=Int E)
@@ -197,7 +196,7 @@ module LUA-TABLE
 
   // ------------------------------------------------------------ concat
   // concat(t [, sep [, i [, j]]]): strings and numbers only.
-  rule <k> #apply(builtin("table.concat"), ListItem(tref(T)) Rest)
+  rule <k> #applyB(builtin("table.concat"), ListItem(tref(T)) Rest)
         => #tconcat(M, #optInt(#head(#tail(Rest)), 1), #optInt(#head(#tail(#tail(Rest))), #border(M, A)),
                     #optStr(#head(Rest)), "") ~> #toVals ...</k>
        <tables> ... T |-> #tbl(M, A, _) ... </tables>
@@ -224,7 +223,7 @@ module LUA-TABLE
   // foreach(t, f) calls f(k, v) for each pair, foreachi(t, f) f(i, t[i]) for
   // i = 1..#t; the first non-nil result stops the loop and is returned.
   syntax KItem ::= #foreach(Int, Val, Val) | #foreachi(Int, Val, Int, Int) | #foreachRes(K)
-  rule <k> #apply(builtin("table.foreach"), ListItem(tref(T)) ListItem(F:Val) _)
+  rule <k> #applyB(builtin("table.foreach"), ListItem(tref(T)) ListItem(F:Val) _)
         => #foreach(T, F, #nextKey(keys_list(M), nil, nil)) ...</k>
        <tables> ... T |-> #tbl(M, _, _) ... </tables>
   rule <k> #foreach(_, _, nil) => #vals(.List) ...</k>
@@ -235,7 +234,7 @@ module LUA-TABLE
   rule <k> #foreachNext(T, F, K) => #foreach(T, F, #nextKey(keys_list(M), K, nil)) ...</k>
        <tables> ... T |-> #tbl(M, _, _) ... </tables>
 
-  rule <k> #apply(builtin("table.foreachi"), ListItem(tref(T)) ListItem(F:Val) _)
+  rule <k> #applyB(builtin("table.foreachi"), ListItem(tref(T)) ListItem(F:Val) _)
         => #foreachi(T, F, 1, #border(M, A)) ...</k>
        <tables> ... T |-> #tbl(M, A, _) ... </tables>
   rule <k> #foreachi(_, _, I, N) => #vals(.List) ...</k> requires I >Int N
@@ -258,15 +257,15 @@ module LUA-TABLE
                  | #partCheck(Int, Int, Int, Val, Val, Int, Int)
                  | #afterPart(Int, Int, Int, Val, Int) | #recurse(Int, Int, Int, Val, Int)
 
-  rule <k> #apply(builtin("table.sort"), ListItem(tref(T)) Rest) => #auxsort(T, 1, #border(M, A), #head(Rest)) ~> #vals(.List) ...</k>
+  rule <k> #applyB(builtin("table.sort"), ListItem(tref(T)) Rest) => #auxsort(T, 1, #border(M, A), #head(Rest)) ~> #vals(.List) ...</k>
        <tables> ... T |-> #tbl(M, A, _) ... </tables>
     requires #head(Rest) ==K nil orBool #type(#head(Rest)) ==String "function"
-  rule <k> #apply(builtin("table.sort"), ListItem(tref(_)) ListItem(C:Val) _) => #argError(2, "sort", "function", C) ...</k>
+  rule <k> #applyB(builtin("table.sort"), ListItem(tref(_)) ListItem(C:Val) _) => #argError(2, "sort", "function", C) ...</k>
     requires C =/=K nil andBool #type(C) =/=String "function"
 
   rule <k> #ifLess(T, I, J, C, K1, K2) => #lessV(#rawget(M, #ik(I)), #rawget(M, #ik(J)), C) ~> #branchK(K1, K2) ...</k>
        <tables> ... T |-> #tbl(M, _, _) ... </tables>
-  rule <k> #lessV(A, B, nil) => #bin("<", A, B) ...</k>
+  rule <k> #lessV(A, B, nil) => #bin("<", A, B, .K, .K) ...</k>
   rule <k> #lessV(A, B, F) => #apply(F, ListItem(A) ListItem(B)) ~> #first ...</k> requires F =/=K nil
   rule <k> V:Val ~> #branchK(K1, _) => K1 ...</k> requires #truthy(V)
   rule <k> V:Val ~> #branchK(_, K2) => K2 ...</k> requires notBool #truthy(V)
