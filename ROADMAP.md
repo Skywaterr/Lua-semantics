@@ -16,7 +16,7 @@ Goal: a K definition that runs every deterministic program in `tests/` and match
 
 ## Architecture decisions (set once, in M0/M1)
 - **Backend:** LLVM (`kompile --backend llvm`), because `life.lua` runs 2000 generations and writes 42,000 lines. Haskell is too slow for that.
-- **Modules:** split `src/lua.k` into `lua-syntax.k`, `lua-config.k`, `lua-values.k`, `lua-semantics.k`, `lua-stdlib.k`, `lua-string-format.k` and `lua-coroutines.k`. `lua.k` imports them all. A single file is also fine until about M4.
+- **Modules:** split `src/lua.k` into `lua-syntax.k`, `lua-config.k`, `lua-values.k`, `lua-semantics.k`, `lua-stdlib.k`, `lua-string-format.k` and `lua-coroutines.k`. `lua.k` imports them all. A single file is also fine until about M4. (As built in M2: see the M2 status below.)
 - **Values:** `nil | Bool | Float | String | tableRef(Int) | closure(...) | builtin(Name) | threadRef(Int)`. Every Lua 5.1 number is a double, so use K `Float` (double precision) throughout. Convert to `Int` only for indexing and `%d`.
 - **Configuration (sketch):**
   ```
@@ -70,11 +70,26 @@ Do the whole grammar up front, since parsing problems shape everything downstrea
 Literals, arithmetic, string↔number coercion, comparison, `and`/`or` short-circuit returning operands, `not`, `..`, `==` (by reference for tables and functions), globals in `_G`, locals with block scoping, `if`/`while`/`repeat` (the `until` condition sees the body's locals), `break`, and numeric `for` (start, limit and step evaluated once; hidden control variable; fresh local each iteration; float steps).
 - **Number→string:** `tostring` uses `%.14g`. Check early whether K's `Float2String(Float, String)` format hook exists in v7.1. If not, write `%g` formatting in K.
 - **Builtins:** `print` (tab-separated, uses `tostring`), `io.write` (numbers formatted with `%.14g`), `_VERSION = "Lua 5.1"`.
-- Tests that turn green: `hello`, `factorial2`.
+- Tests that turn green: `hello`, plus the new `tests/feature-core.lua`. `factorial2` moves to M3, because it defines a function.
+
+**Status: done.** `make test` passes `hello` and `feature-core` (2/13). Every other test stops at its first function definition (M3), except `cf`, which stops at `string.format` (M5). What M2 decided, for later milestones:
+- **Files:** `lua-syntax.k` → `lua-values.k` → `lua-number.k` → `lua-literal.k` → `lua-config.k` → `lua-eval.k` → `lua-stdlib.k` → `lua.k`. Each file requires the one before it, and `lua.k` lists them.
+- **Values:** `Val ::= Nil | Bool | Float | String | TRef | Fn`, with `Exp ::= Val` and `KResult ::= Val`. Lua's `true`/`false` parse as K `Bool` tokens (`LUA-COMMON` imports `BOOL-SYNTAX`), and `nil` parses as the `Nil` sort, so these literals are already values. Library functions are `builtin("name")`, and M3 adds closures to `Fn`.
+- **Evaluation:** an expression is evaluated in place on top of `<k>` and leaves a `Val` (single-value context; a call there goes through `#call(F) ~> #first`). Multi-value lists go through `#evalList(List)`, which leaves `#vals(List)`, and only the last expression keeps all of its values (`#multi`). Operators are first rewritten to strict internal forms `#bin(Op, A, B)`, `#un`, `#and`, `#or` and `#idx`, so `lua-syntax.k` has no strictness attributes. In rules, a Lua parenthesis is written `( E ):PPrefix` and call arguments `( Es ):Args`; the cast picks the Lua production over K's grouping brackets.
+- **Statements** run as `#exec(S)`. Blocks restore `<env>` on exit through `#restoreEnv(Env, NextLoc, Epoch)`. If `<epoch>` hasn't changed since the block was entered, the store locations allocated inside the block are freed and reused, which keeps `<store>` small in long loops. **M3 must bump `<epoch>` whenever a closure is created, and M8 on every coroutine switch.** `break` drops `<k>` items up to `#breakTarget(Env)`. `return` currently only ends the main chunk (`#returnTop`).
+- **Assignment** order matches Lua 5.1: target table and key expressions are evaluated left to right, then the right-hand side, then values are stored from the last target to the first (`a, a = 1, 2` leaves `1`).
+- **Tables** are `<tables>`: `Id |-> Map`, with `_G` = table 0 and `io` = table 1. `-0` is normalized to `0` as a key; `nil` and NaN keys are errors. `#t` uses Lua's unbound search (doubling, then binary search). M4 should check that this matches 5.1's array-part behavior on tables with holes. `<fenv>` holds the current globals table; M6 makes closures save and restore it.
+- **Numbers:** `Float2String(F, format)` is **not implemented** by the LLVM backend (it crashes). So `lua-number.k` formats `%.Pg` exactly: a double is `M·2^E`, which K's big integers turn into an exact decimal, rounded half-to-even. M5 can reuse `#decimal` for `%f` and `%e`. Parsing (`#str2num`) follows `luaO_str2d` (whitespace, sign, hex, `inf`/`nan`, decimal), and the result goes through `roundFloat(_, 53, 11)`, because K's `String2Float` doesn't clamp to the double range.
+- **Known differences from Lua:**
+  - K never sets a NaN's sign bit, so every NaN prints as `-nan`, x86 Lua's output for `0/0`. Real Lua prints `-(0/0)` and `tonumber("nan")` as `nan`.
+  - Lua's constant folding makes the literal `-0` print as `0`; here it prints `-0`.
+  - `tostring` addresses are made up (`table: 0x00000001`, `function: builtin: print`).
+  - `io.write` returns nothing (M9: the file).
+- **Errors:** `#error(msg)` halts the run and records `lua: msg` in `<errors>`. K has no `stderr` stream, so `klua` shows it in the final configuration (`k-logs/NAME.err`). The run exits non-zero.
 
 ### M3 — Functions, closures, multiple values
 Function definitions, calls, upvalues (shared Locs), recursion, method sugar `:`, varargs `...`, `select('#',…)`, `unpack`, multiple assignment (evaluate everything, then assign), multiple returns with adjustment, tail calls (no stack growth), and the 5.1 `arg` table in vararg functions (`LUA_COMPAT_VARARG`).
-- Tests that turn green: `factorial` (Y combinator), `bisect` once M5's `string.format` lands.
+- Tests that turn green: `factorial2`, `factorial` (Y combinator), and `bisect` once M5's `string.format` lands.
 
 ### M4 — Tables
 Constructors, `t[k]`/`t.k` get and set, float keys normalized (`1.0` ≡ `1`), `nil`/NaN key errors, assigning `nil` deletes, `#t` (border; match 5.1's array-part behavior on the tests), `next`/`pairs`/`ipairs`, and `table.getn/insert/remove/concat/sort` (`sort` with a comparator).
