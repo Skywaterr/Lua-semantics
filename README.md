@@ -19,3 +19,13 @@ If you have `nmap` installed, one of its dependencies will be the most updated v
 echo 'export PATH="/path/to/your/binary/lua:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
+
+# Makefile Targets
+
+Run `make generate` to run `lua` on each `.lua` file within `tests`. The output files will go into the `reference-output` folder.
+
+Later on, when we generate output files from the same `tests` directory and put them into an `output` folder, we can see if the output matches with the reference via 
+
+```bash
+make compare output reference-output
+```
