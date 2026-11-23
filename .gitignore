@@ -1,3 +1,5 @@
 *-kompiled
 *.depend
 *kore-exec.tar.gz
+k-output/
+k-logs/
