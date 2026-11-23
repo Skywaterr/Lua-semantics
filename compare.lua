@@ -1,35 +1,19 @@
+-- Compare the contents of matching files between two directories.
 
-
-
--- Compare the output between reference-output
--- and a directory of your choice. The files that
--- will be compared between these directories must
--- the same filename and extension.
-
-
-
--- Grab all files in the tests directory with ls -1, put it in the default table
--- Grab all files in a directory specified by args[1], also with ls -1
--- Put those in our table
--- For each file in our table,
---      Check if that filename is in the default table
---      If yes, grab the contents of both our file and the test file output
---      Check that they are the same
---      If yes, up a certain variable
---      If no, don't up a certain variable
-
-
-
+-- Colors for pretty printing stats
 local RESET = "\27[0m"
 local RED = "\27[31m"
 local GREEN = "\27[38;2;0;255;0m"
 
+-- Usage
 if not arg[1] then
     print("Compare files with matching filenames between directories")
     print("Usage: lua compare.lua directory_name_1 directory_name_2")
     os.exit(0)
 end
 
+-- Given a directory name, return a table where
+-- table[filename] = nil, essentially an array
 function table_of_filenames(directory)
     -- Quote the directory path for the shell so spaces or special
     -- characters don't break the command
@@ -42,6 +26,7 @@ function table_of_filenames(directory)
     return filenames
 end
 
+-- Helper to print a table
 function print_table(table)
     for key, value in pairs(table) do
         print(key, value)
@@ -49,8 +34,8 @@ function print_table(table)
 end
 
 
+-- Return whether the contents of our_dir_name/filename and test_dir_name/filename are the same
 function check_file_match(filename, our_dir_name, test_dir_name)
-    -- Return whether the contents of our_dir_name/filename and test_dir_name/filename are the same
     file1_name = our_dir_name.."/"..filename
     file2_name = test_dir_name.."/"..filename
     file1_handle = io.open(file1_name)
@@ -65,8 +50,9 @@ function check_file_match(filename, our_dir_name, test_dir_name)
     end
 end
 
+
+-- Return directory file matching stats.
 function check_directories_match(directory_1, directory_2)
-    -- Return directory file matching stats.
     -- successful:  The number of files where the filename exists in both directory_1 and directory_2,
     --              and their contents match.
     -- failed:      The number of files where the filename exists in both directory_1 and directory_2,
@@ -97,6 +83,9 @@ function check_directories_match(directory_1, directory_2)
     return successful, failed, didnt_test
 end 
 
+
+-- Main script, grab command line arguments that
+-- represent directories and run the comparison
 local successful, failed, skipped = check_directories_match(arg[1], arg[2])
 local success_rate = successful / (successful + failed)
 print(string.format(GREEN .. "%.2f%%" .. RESET .. " of tests passed (%d/%d)", success_rate * 100, successful, successful + failed))
