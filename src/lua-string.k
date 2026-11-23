@@ -10,10 +10,9 @@ module LUA-STRING
   imports LUA-PATTERN
   imports LUA-FORMAT
 
-  // Table 5 is the string library. Strings index it, which is what lets
-  // s:upper() work (in 5.1 every string's metatable has __index = string;
-  // M6 makes that an actual metatable).
-  rule <k> #index(_:String, K) => #index(tref(5), K) ...</k>
+  // Table 5 is the string library. All strings share one metatable (table
+  // 6, see <strMeta>) whose __index is the string table, which is what lets
+  // s:upper() work.
 
   syntax Map ::= "#stringLib" [function, total]
   rule #stringLib =>

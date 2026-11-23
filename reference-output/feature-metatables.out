@@ -1,0 +1,26 @@
+5	red	nil	nil
+hello!	42!	nil
+found	nil
+a=1 b=2	10	2
+nil	via proxy	via proxy
+raw	nil
+balance 150	savings balance 15	true
+(4, 6)	(2, 2)	11	(2, 4)	(3, 6)	(1.5, 2)
+mod	pow	(-1, -2)
+(1, 2)|(3, 4)	(1, 2)|s	s|(3, 4)	1|(1, 2)
+(1, 2)	(3, 4)
+true	false	true	false	false	false
+true	false	false	true	true	true
+true	true
+c	5
+c	30
+hidden!	locked
+nil	nil	true	xx
+true	true	true	true
+42	42	nil	true
+inside	nil
+from env2	nil
+true
+true
+<undefined_one>	<undefined_two>
+new_global_a,new_global_b	3	2

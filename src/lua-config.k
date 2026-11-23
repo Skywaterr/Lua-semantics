@@ -10,7 +10,12 @@ module LUA-CONFIG
 
   // <env>     Name |-> Loc for the locals in scope
   // <store>   Loc |-> Val; upvalues (M3) share a Loc
-  // <fenv>    the current function environment: the table globals live in
+  // <callStack> the active Lua function calls, innermost first, as
+  //           #frame(function, tail calls it replaced); globals are looked
+  //           up in the innermost function's environment (see #genv)
+  // <threadEnv> the thread's global table (getfenv(0); what library
+  //           functions see)
+  // <strMeta> the metatable shared by all strings
   // <varargs> the current function's `...` values
   // <funcs>   Id |-> #fun(...) for every closure created (see LUA-FUNCTION)
   // <epoch>   bumped whenever a local may outlive its block (closure
@@ -26,7 +31,9 @@ module LUA-CONFIG
     <lua>
       <k> #init ~> #chunk($PGM:Block) </k>
       <env> .Map </env>
-      <fenv> tref(0) </fenv>
+      <callStack> .List </callStack>
+      <threadEnv> tref(0) </threadEnv>
+      <strMeta> tref(6) </strMeta>
       <varargs> .List </varargs>
       <store> .Map </store>
       <nextLoc> 0 </nextLoc>
@@ -93,20 +100,90 @@ module LUA-CONFIG
   // a constructor sets it; see #border), and its metatable (M6).
   syntax TableData ::= #tbl(Map, Int, Val)
 
-  // t[k] and t[k] = v without metamethods (those come in M6).
-  syntax KItem ::= #index(Val, Val) | #setIndex(Val, Val, Val) | #newTable(Map) | #newTableN(Map, Int)
-  rule <k> #index(tref(T), K) => #rawget(M, K) ...</k> <tables> ... T |-> #tbl(M, _, _) ... </tables>
-  rule <k> #index(V, _) => #error("attempt to index a " +String #type(V) +String " value") ...</k>
-    [owise]
+  // ----------------------------------------------------------- functions
+  // A closure's data: parameters, vararg?, needs the `arg` table?, body,
+  // captured Name |-> Loc map, environment table. See LUA-FUNCTION.
+  syntax FunInfo ::= #fun(List, Bool, Bool, Block, Map, Val)
+  syntax Frame ::= #frame(Val, Int)
 
-  rule <k> #setIndex(tref(_), nil, _) => #error("table index is nil") ...</k>
-  rule <k> #setIndex(tref(_), K, _) => #error("table index is NaN") ...</k>
-    requires #isNaNVal(K)
-  rule <k> #setIndex(tref(T), K, V) => .K ...</k>
+  // The environment globals are read from and written to: the innermost
+  // Lua function's (its current one, so setfenv takes effect at once).
+  // Calling a value (LUA-EVAL, LUA-FUNCTION, LUA-STDLIB give the rules).
+  syntax KItem ::= #apply(Val, List) | "#first" | "#discard"
+
+  syntax KItem ::= "#genv"
+  rule <k> #genv => G ...</k>
+       <callStack> ListItem(#frame(closure(I), _)) ... </callStack>
+       <funcs> ... I |-> #fun(_, _, _, _, _, G) ... </funcs>
+  rule <k> #genv => G ...</k> <callStack> .List </callStack> <threadEnv> G </threadEnv>
+
+  // ----------------------------------------------------------- metatables
+  // The metatable of a value: tables have their own, strings share
+  // <strMeta>, other values have none.
+  syntax KItem ::= #metaOf(Val) | #getTM(Val, String) | #tmK(String) | #tmFrom(Val, String)
+  rule <k> #metaOf(tref(T)) => Mt ...</k> <tables> ... T |-> #tbl(_, _, Mt) ... </tables>
+  rule <k> #metaOf(_:String) => SM ...</k> <strMeta> SM </strMeta>
+  rule <k> #metaOf(V) => nil ...</k> requires notBool (isTRef(V) orBool isString(V))
+  // A metamethod: the event's field in the metatable, read raw.
+  rule <k> #getTM(V, E) => #metaOf(V) ~> #tmK(E) ...</k>
+  rule <k> Mt:Val ~> #tmK(E) => #tmFrom(Mt, E) ...</k>
+  rule <k> #tmFrom(tref(M), E) => #rawget(F, E) ...</k> <tables> ... M |-> #tbl(F, _, _) ... </tables>
+  rule <k> #tmFrom(V, _) => nil ...</k> requires notBool isTRef(V)
+
+  // ----------------------------------------------------------- t[k]
+  // luaV_gettable: a raw hit, else __index (a function is called with
+  // (t, k); anything else is indexed in turn), at most 100 levels deep.
+  syntax KItem ::= #index(Val, Val) | #gettable(Val, Val, Int) | #gtRaw(Val, Val, Int) | #gtTM(Val, Val, Int, Bool)
+  // fast path: a field that is present
+  rule <k> #index(tref(T), K) => #rawget(M, K) ...</k> <tables> ... T |-> #tbl(M, _, _) ... </tables>
+    requires #rawget(M, K) =/=K nil [priority(40)]
+  rule <k> #index(T, K) => #gettable(T, K, 0) ...</k>
+  rule <k> #gettable(_, _, C) => #error("loop in gettable") ...</k> requires C >=Int 100
+  rule <k> #gettable(tref(T), K, C) => #rawget(M, K) ~> #gtRaw(tref(T), K, C) ...</k>
+       <tables> ... T |-> #tbl(M, _, _) ... </tables>
+    requires C <Int 100
+  rule <k> #gettable(V, K, C) => #getTM(V, "__index") ~> #gtTM(V, K, C, false) ...</k>
+    requires C <Int 100 andBool notBool isTRef(V)
+  rule <k> V:Val ~> #gtRaw(_, _, _) => V ...</k> requires V =/=K nil
+  rule <k> nil ~> #gtRaw(T, K, C) => #getTM(T, "__index") ~> #gtTM(T, K, C, true) ...</k>
+  rule <k> nil ~> #gtTM(_, _, _, true) => nil ...</k>
+  rule <k> nil ~> #gtTM(V, _, _, false) => #error("attempt to index a " +String #type(V) +String " value") ...</k>
+  rule <k> H:Val ~> #gtTM(V, K, _, _) => #apply(H, ListItem(V) ListItem(K)) ~> #first ...</k>
+    requires #type(H) ==String "function"
+  rule <k> H:Val ~> #gtTM(_, K, C, _) => #gettable(H, K, C +Int 1) ...</k>
+    requires H =/=K nil andBool #type(H) =/=String "function"
+
+  // ----------------------------------------------------------- t[k] = v
+  // luaV_settable: a raw store if the key is present or there is no
+  // __newindex; else __newindex (a function is called with (t, k, v);
+  // anything else is assigned to in turn).
+  syntax KItem ::= #setIndex(Val, Val, Val) | #settable(Val, Val, Val, Int) | #stTM(Val, Val, Val, Int, Bool)
+                 | #rawsetT(Int, Val, Val)
+  rule <k> #setIndex(T, K, V) => #settable(T, K, V, 0) ...</k>
+  rule <k> #settable(_, _, _, C) => #error("loop in settable") ...</k> requires C >=Int 100
+  rule <k> #settable(tref(T), K, V, C) => #rawsetT(T, K, V) ...</k>
+       <tables> ... T |-> #tbl(M, _, Mt) ... </tables>
+    requires C <Int 100 andBool (#rawget(M, K) =/=K nil orBool Mt ==K nil)
+  rule <k> #settable(tref(T), K, V, C) => #getTM(tref(T), "__newindex") ~> #stTM(tref(T), K, V, C, true) ...</k>
+       <tables> ... T |-> #tbl(M, _, Mt) ... </tables>
+    requires C <Int 100 andBool #rawget(M, K) ==K nil andBool Mt =/=K nil
+  rule <k> #settable(T, K, V, C) => #getTM(T, "__newindex") ~> #stTM(T, K, V, C, false) ...</k>
+    requires C <Int 100 andBool notBool isTRef(T)
+  rule <k> nil ~> #stTM(tref(T), K, V, _, true) => #rawsetT(T, K, V) ...</k>
+  rule <k> nil ~> #stTM(T, _, _, _, false) => #error("attempt to index a " +String #type(T) +String " value") ...</k>
+  rule <k> H:Val ~> #stTM(T, K, V, _, _) => #apply(H, ListItem(T) ListItem(K) ListItem(V)) ~> #discard ...</k>
+    requires #type(H) ==String "function"
+  rule <k> H:Val ~> #stTM(_, K, V, C, _) => #settable(H, K, V, C +Int 1) ...</k>
+    requires H =/=K nil andBool #type(H) =/=String "function"
+
+  // rawset, with the key checks.
+  rule <k> #rawsetT(_, nil, _) => #error("table index is nil") ...</k>
+  rule <k> #rawsetT(_, K, _) => #error("table index is NaN") ...</k> requires #isNaNVal(K)
+  rule <k> #rawsetT(T, K, V) => .K ...</k>
        <tables> ... T |-> #tbl((M => #rawset(M, K, V)), _, _) ... </tables>
     requires K =/=K nil andBool notBool #isNaNVal(K)
-  rule <k> #setIndex(V, _, _) => #error("attempt to index a " +String #type(V) +String " value") ...</k>
-    [owise]
+
+  syntax KItem ::= #newTable(Map) | #newTableN(Map, Int)
 
   rule <k> #newTable(M) => #newTableN(M, 0) ...</k>
   rule <k> #newTableN(M, A) => tref(N) ...</k>

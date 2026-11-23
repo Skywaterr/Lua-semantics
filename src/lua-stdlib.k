@@ -9,8 +9,9 @@ requires "lua-string.k"
 module LUA-STDLIB
   imports LUA-STRING
 
-  // Tables 0-5: _G, io, table, math, arg (the interpreter name at -1 and
-  // the script name at 0, as lua.c sets it up), string.
+  // Tables 0-6: _G, io, table, math, arg (the interpreter name at -1 and
+  // the script name at 0, as lua.c sets it up), string, and the metatable
+  // of strings.
   rule <k> #init => .K ...</k>
        <args> Script </args>
        <tables> _ => 0 |-> #tbl(#globals, 0, nil)
@@ -19,8 +20,9 @@ module LUA-STDLIB
                      3 |-> #tbl(#mathLib, 0, nil)
                      4 |-> #tbl((-1.0 |-> "lua" 0.0 |-> Script), 0, nil)
                      5 |-> #tbl(#stringLib, 0, nil)
+                     6 |-> #tbl("__index" |-> tref(5), 0, nil)
        </tables>
-       <nextTable> _ => 6 </nextTable>
+       <nextTable> _ => 7 </nextTable>
 
   syntax Map ::= "#globals" [function, total]
   rule #globals =>
@@ -28,12 +30,19 @@ module LUA-STDLIB
          "_VERSION" |-> "Lua 5.1"
          "arg"      |-> tref(4)
          "io"       |-> tref(1)
+         "getfenv"  |-> builtin("getfenv")
+         "getmetatable" |-> builtin("getmetatable")
          "ipairs"   |-> builtin("ipairs")
          "math"     |-> tref(3)
          "next"     |-> builtin("next")
          "pairs"    |-> builtin("pairs")
          "print"    |-> builtin("print")
+         "rawequal" |-> builtin("rawequal")
+         "rawget"   |-> builtin("rawget")
+         "rawset"   |-> builtin("rawset")
          "select"   |-> builtin("select")
+         "setfenv"  |-> builtin("setfenv")
+         "setmetatable" |-> builtin("setmetatable")
          "string"   |-> tref(5)
          "table"    |-> tref(2)
          "tonumber" |-> builtin("tonumber")
@@ -64,7 +73,20 @@ module LUA-STDLIB
     requires L =/=K .List
   rule #joinTostr(_) => "" [owise]
 
-  rule <k> #apply(builtin("print"), Args) => #output(#joinTostr(Args) +String "\n") ~> #vals(.List) ...</k>
+  // print calls the global `tostring` (looked up in the thread's globals,
+  // as lua_getglobal does) on each argument and writes the results.
+  syntax KItem ::= #print(List, Bool) | #printOne(List) | #printWrite(List)
+  rule <k> #apply(builtin("print"), Args) => #print(Args, true) ...</k>
+  rule <k> #print(.List, _) => #output("\n") ~> #vals(.List) ...</k>
+  rule <k> #print(ListItem(V:Val) L, First) => #index(G, "tostring") ~> #printOne(ListItem(V))
+           ~> #printWrite(ListItem(First) L) ...</k>
+       <threadEnv> G </threadEnv>
+  rule <k> F:Val ~> #printOne(Arg) => #apply(F, Arg) ~> #first ...</k>
+  rule <k> S:Val ~> #printWrite(ListItem(First:Bool) L)
+        => #output(#if First #then "" #else "\t" #fi +String {#tostringCoerce(S)}:>String) ~> #print(L, false) ...</k>
+    requires #tostringCoerce(S) =/=K nil
+  rule <k> S:Val ~> #printWrite(_) => #error("'tostring' must return a string to 'print'") ...</k>
+    requires #tostringCoerce(S) ==K nil
 
   // ------------------------------------------------------------ io.write
   // Strings are written as they are, numbers with %.14g; anything else is
@@ -81,7 +103,11 @@ module LUA-STDLIB
 
   // ------------------------------------------------- type, tostring, tonumber
   rule <k> #apply(builtin("type"), ListItem(V:Val) _) => #vals(ListItem(#type(V))) ...</k>
-  rule <k> #apply(builtin("tostring"), ListItem(V:Val) _) => #vals(ListItem(#tostr(V))) ...</k>
+  // tostring uses __tostring if there is one (returning whatever it returns).
+  syntax KItem ::= #tostringTM(Val)
+  rule <k> #apply(builtin("tostring"), ListItem(V:Val) _) => #getTM(V, "__tostring") ~> #tostringTM(V) ...</k>
+  rule <k> nil ~> #tostringTM(V) => #vals(ListItem(#tostr(V))) ...</k>
+  rule <k> H:Val ~> #tostringTM(V) => #apply(H, ListItem(V)) ~> #first ~> #toVals ...</k> requires H =/=K nil
   rule <k> #apply(builtin("tonumber"), ListItem(V:Val)) => #vals(ListItem(#tonumber(V))) ...</k>
   rule <k> #apply(builtin("tonumber"), ListItem(V:Val) ListItem(10.0)) => #vals(ListItem(#tonumber(V))) ...</k>
   rule <k> #apply(builtin(N), .List) => #error("bad argument #1 to '" +String N +String "' (value expected)") ...</k>
@@ -122,4 +148,96 @@ module LUA-STDLIB
   syntax List ::= #range(Map, Int, Int) [function, total]
   rule #range(M, I, J) => ListItem(#rawget(M, Int2Float(I, 53, 11))) #range(M, I +Int 1, J) requires I <=Int J
   rule #range(_, _, _) => .List [owise]
+
+  // ======================================================= metatables
+  // setmetatable(t, mt): t a table, mt nil or a table; refused if the
+  // current metatable has a __metatable field. Returns t.
+  syntax KItem ::= #setmt(Int, Val, Val)
+  rule <k> #apply(builtin("setmetatable"), ListItem(tref(T)) ListItem(MT:Val) _)
+        => #tmFrom(Old, "__metatable") ~> #setmt(T, MT, Old) ...</k>
+       <tables> ... T |-> #tbl(_, _, Old) ... </tables>
+    requires MT ==K nil orBool isTRef(MT)
+  rule <k> P:Val ~> #setmt(T, MT, _) => #vals(ListItem(tref(T))) ...</k>
+       <tables> ... T |-> #tbl(_, _, (_ => MT)) ... </tables>
+    requires P ==K nil
+  rule <k> P:Val ~> #setmt(_, _, _) => #error("cannot change a protected metatable") ...</k> requires P =/=K nil
+  rule <k> #apply(builtin("setmetatable"), ListItem(V:Val) _) => #argError(1, "setmetatable", "table", V) ...</k>
+    requires notBool isTRef(V)
+  rule <k> #apply(builtin("setmetatable"), ListItem(tref(_)) Rest)
+        => #error("bad argument #2 to 'setmetatable' (nil or table expected)") ...</k>
+    requires notBool (#head(Rest) ==K nil orBool isTRef(#head(Rest))) orBool Rest ==K .List
+
+  // getmetatable(v): the __metatable field if the metatable has one.
+  syntax KItem ::= #getmt(Val) | #getmt2(Val)
+  rule <k> #apply(builtin("getmetatable"), ListItem(V:Val) _) => #metaOf(V) ~> #getmt(nil) ...</k>
+  rule <k> nil ~> #getmt(nil) => #vals(ListItem(nil)) ...</k>
+  rule <k> MT:Val ~> #getmt(nil) => #tmFrom(MT, "__metatable") ~> #getmt2(MT) ...</k> requires MT =/=K nil
+  rule <k> nil ~> #getmt2(MT) => #vals(ListItem(MT)) ...</k>
+  rule <k> P:Val ~> #getmt2(_) => #vals(ListItem(P)) ...</k> requires P =/=K nil
+  rule <k> #apply(builtin("getmetatable"), .List) => #error("bad argument #1 to 'getmetatable' (value expected)") ...</k>
+
+  // ======================================================= raw access
+  rule <k> #apply(builtin("rawget"), ListItem(tref(T)) ListItem(K:Val) _) => #vals(ListItem(#rawget(M, K))) ...</k>
+       <tables> ... T |-> #tbl(M, _, _) ... </tables>
+  rule <k> #apply(builtin("rawset"), ListItem(tref(T)) ListItem(K:Val) ListItem(V:Val) _)
+        => #rawsetT(T, K, V) ~> #vals(ListItem(tref(T))) ...</k>
+  rule <k> #apply(builtin(N), ListItem(V:Val) _) => #argError(1, N, "table", V) ...</k>
+    requires (N ==String "rawget" orBool N ==String "rawset") andBool notBool isTRef(V)
+  rule <k> #apply(builtin("rawequal"), ListItem(A:Val) ListItem(B:Val) _) => #vals(ListItem(#rawEq(A, B))) ...</k>
+
+  // ======================================================= environments
+  // getfenv(f) / setfenv(f, t): f is a function or a stack level (1, the
+  // default for getfenv, is the function calling getfenv). Level 0 is the
+  // thread's environment. Library functions have the thread's environment
+  // and cannot be changed.
+  //
+  // Levels follow lua_getstack: count frames from the innermost, where a
+  // frame that replaced N tail calls stands for N more (lost) levels.
+  syntax LevelRes ::= #lvlFrame(Frame) | "#lvlLost" | "#lvlInvalid"
+  syntax LevelRes ::= #level(List, Int) [function, total]
+  rule #level(ListItem(F:Frame) _, 0) => #lvlFrame(F)
+  rule #level(ListItem(#frame(_, T)) Rest, L) => #level(Rest, L -Int 1 -Int T) requires L >Int 0
+  rule #level(_, L) => #lvlLost requires L <Int 0
+  rule #level(_, _) => #lvlInvalid [owise]
+
+  syntax KItem ::= #fenvOf(Val) | #levelFn(LevelRes, String, Int)
+  rule <k> #fenvOf(closure(I)) => #vals(ListItem(FE)) ...</k> <funcs> ... I |-> #fun(_, _, _, _, _, FE) ... </funcs>
+  rule <k> #fenvOf(F) => #vals(ListItem(G)) ...</k> <threadEnv> G </threadEnv> requires notBool isClosureVal(F)
+
+  rule <k> #apply(builtin("getfenv"), .List) => #apply(builtin("getfenv"), ListItem(1.0)) ...</k>
+  rule <k> #apply(builtin("getfenv"), ListItem(nil) _) => #apply(builtin("getfenv"), ListItem(1.0)) ...</k>
+  rule <k> #apply(builtin("getfenv"), ListItem(F:Val) _) => #fenvOf(F) ...</k> requires #type(F) ==String "function"
+  rule <k> #apply(builtin("getfenv"), ListItem(N:Val) _) => #vals(ListItem(G)) ...</k> <threadEnv> G </threadEnv>
+    requires isFloat(#tonumber(N)) andBool #truncInt({#tonumber(N)}:>Float) ==Int 0
+  rule <k> #apply(builtin("getfenv"), ListItem(N:Val) _)
+        => #levelFn(#level(Stack, #truncInt({#tonumber(N)}:>Float) -Int 1), "getfenv", #truncInt({#tonumber(N)}:>Float)) ...</k>
+       <callStack> Stack </callStack>
+    requires isFloat(#tonumber(N)) andBool #truncInt({#tonumber(N)}:>Float) >Int 0
+  rule <k> #apply(builtin(Fn), ListItem(N:Val) _) => #error("bad argument #1 to '" +String Fn +String "' (level must be non-negative)") ...</k>
+    requires (Fn ==String "getfenv" orBool Fn ==String "setfenv") andBool isFloat(#tonumber(N)) andBool #truncInt({#tonumber(N)}:>Float) <Int 0
+  rule <k> #apply(builtin("getfenv"), ListItem(V:Val) _) => #argError(1, "getfenv", "number", V) ...</k>
+    requires V =/=K nil andBool #type(V) =/=String "function" andBool notBool isFloat(#tonumber(V))
+
+  rule <k> #levelFn(#lvlFrame(#frame(F, _)), "getfenv", _) => #fenvOf(F) ...</k>
+  rule <k> #levelFn(#lvlLost, _, L) => #error("no function environment for tail call at level " +String Int2String(L)) ...</k>
+  rule <k> #levelFn(#lvlInvalid, Fn, _) => #error("bad argument #1 to '" +String Fn +String "' (invalid level)") ...</k>
+
+  syntax KItem ::= #setfenvOf(Val, Val)
+  rule <k> #apply(builtin("setfenv"), ListItem(_) ListItem(T:Val) _) => #argError(2, "setfenv", "table", T) ...</k>
+    requires notBool isTRef(T)
+  rule <k> #apply(builtin("setfenv"), ListItem(N:Val) ListItem(T:TRef) _) => #vals(.List) ...</k>
+       <threadEnv> _ => T </threadEnv>
+    requires isFloat(#tonumber(N)) andBool #truncInt({#tonumber(N)}:>Float) ==Int 0
+  rule <k> #apply(builtin("setfenv"), ListItem(F:Val) ListItem(T:TRef) _) => #setfenvOf(F, T) ...</k>
+    requires #type(F) ==String "function"
+  rule <k> #apply(builtin("setfenv"), ListItem(N:Val) ListItem(T:TRef) _)
+        => #levelFn(#level(Stack, #truncInt({#tonumber(N)}:>Float) -Int 1), "setfenv", #truncInt({#tonumber(N)}:>Float)) ~> #setfenvK(T) ...</k>
+       <callStack> Stack </callStack>
+    requires isFloat(#tonumber(N)) andBool #truncInt({#tonumber(N)}:>Float) >Int 0
+  syntax KItem ::= #setfenvK(Val)
+  rule <k> #levelFn(#lvlFrame(#frame(F, _)), "setfenv", _) ~> #setfenvK(T) => #setfenvOf(F, T) ...</k>
+  rule <k> #setfenvOf(closure(I), T) => #vals(ListItem(closure(I))) ...</k>
+       <funcs> ... I |-> #fun(_, _, _, _, _, (_ => T)) ... </funcs>
+  rule <k> #setfenvOf(F, _) => #error("'setfenv' cannot change environment of given object") ...</k>
+    requires notBool isClosureVal(F)
 endmodule

@@ -24,9 +24,12 @@ module LUA-EVAL
   rule <k> X:Name => V ...</k>
        <env> ... X |-> L ... </env>
        <store> ... L |-> V ... </store>
-  rule <k> X:Name => #index(G, Name2String(X)) ...</k>
-       <env> Env </env> <fenv> G </fenv>
+  rule <k> X:Name => #genv ~> #indexK(Name2String(X)) ...</k>
+       <env> Env </env>
     requires notBool X in_keys(Env)
+  syntax KItem ::= #indexK(Val) | #setIndexK(Val, Val)
+  rule <k> G:Val ~> #indexK(K) => #index(G, K) ...</k>
+  rule <k> G:Val ~> #setIndexK(K, V) => #setIndex(G, K, V) ...</k>
 
   // ------------------------------------------------------ desugaring
   syntax Exp ::= #bin(String, Exp, Exp) [seqstrict]
@@ -73,14 +76,28 @@ module LUA-EVAL
   rule #isArith(Op) => Op ==String "+" orBool Op ==String "-" orBool Op ==String "*"
                orBool Op ==String "/" orBool Op ==String "%" orBool Op ==String "^"
 
-  // Operands are numbers or strings that convert (tonumber). On failure
-  // Lua blames the first operand that does not convert.
+  // Operands are numbers or strings that convert (tonumber); otherwise the
+  // event's metamethod of the first operand, else of the second, is called
+  // (call_binTM). Without one Lua blames the first operand that does not
+  // convert.
   rule <k> #bin(Op, A:Val, B:Val) => #arithF(Op, {#tonumber(A)}:>Float, {#tonumber(B)}:>Float) ...</k>
     requires #isArith(Op) andBool #tonumber(A) =/=K nil andBool #tonumber(B) =/=K nil
-  rule <k> #bin(Op, A:Val, _:Val) => #arithError(A) ...</k>
-    requires #isArith(Op) andBool #tonumber(A) ==K nil
-  rule <k> #bin(Op, A:Val, B:Val) => #arithError(B) ...</k>
-    requires #isArith(Op) andBool #tonumber(A) =/=K nil andBool #tonumber(B) ==K nil
+  rule <k> #bin(Op, A:Val, B:Val) => #binTM(#event(Op), A, B, #arithError(#if #tonumber(A) ==K nil #then A #else B #fi)) ...</k>
+    requires #isArith(Op) andBool (#tonumber(A) ==K nil orBool #tonumber(B) ==K nil)
+
+  syntax String ::= #event(String) [function, total]
+  rule #event("+") => "__add"   rule #event("-") => "__sub"   rule #event("*") => "__mul"
+  rule #event("/") => "__div"   rule #event("%") => "__mod"   rule #event("^") => "__pow"
+  rule #event("..") => "__concat"
+  rule #event(_) => "" [owise]
+
+  // call_binTM(a, b, event): a's metamethod, else b's; call it with (a, b).
+  syntax KItem ::= #binTM(String, Val, Val, K) | #binTM2(String, Val, Val, K) | #binTMCall(Val, Val, K)
+  rule <k> #binTM(E, A, B, Err) => #getTM(A, E) ~> #binTM2(E, A, B, Err) ...</k>
+  rule <k> nil ~> #binTM2(E, A, B, Err) => #getTM(B, E) ~> #binTMCall(A, B, Err) ...</k>
+  rule <k> H:Val ~> #binTM2(_, A, B, _) => #apply(H, ListItem(A) ListItem(B)) ~> #first ...</k> requires H =/=K nil
+  rule <k> nil ~> #binTMCall(_, _, Err) => Err ...</k>
+  rule <k> H:Val ~> #binTMCall(A, B, _) => #apply(H, ListItem(A) ListItem(B)) ~> #first ...</k> requires H =/=K nil
 
   syntax KItem ::= #arithError(Val)
   rule <k> #arithError(V) => #error("attempt to perform arithmetic on a " +String #type(V) +String " value") ...</k>
@@ -95,20 +112,53 @@ module LUA-EVAL
   rule #arithF(_, _, _) => NaN [owise]
 
   rule <k> #un("-", A:Val) => --Float {#tonumber(A)}:>Float ...</k> requires #tonumber(A) =/=K nil
-  rule <k> #un("-", A:Val) => #arithError(A) ...</k> requires #tonumber(A) ==K nil
+  rule <k> #un("-", A:Val) => #binTM("__unm", A, A, #arithError(A)) ...</k> requires #tonumber(A) ==K nil
 
   // ------------------------------------------------------ comparison
+  // ==: different types are never equal; two different tables are equal if
+  // they share an __eq metamethod (the same one in both metatables) that
+  // says so (luaV_equalval, get_compTM).
   rule <k> #bin("==", A:Val, B:Val) => #rawEq(A, B) ...</k>
-  rule <k> #bin("~=", A:Val, B:Val) => notBool #rawEq(A, B) ...</k>
+    requires notBool (isTRef(A) andBool isTRef(B) andBool A =/=K B)
+  rule <k> #bin("==", tref(A), tref(B)) => #metaOf(tref(A)) ~> #eq1(tref(A), tref(B)) ...</k>
+    requires A =/=Int B
+  rule <k> #bin("~=", A:Val, B:Val) => #bin("==", A, B) ~> #not ...</k>
+  syntax KItem ::= "#not" | #eq1(Val, Val) | #eq2(Val, Val, Val) | #eq3(Val, Val, Val, Val) | #eq4(Val, Val, Val)
+                 | #callBool(Val, Val, Val)
+  rule <k> V:Val ~> #not => notBool #truthy(V) ...</k>
+  rule <k> M1:Val ~> #eq1(A, B) => #metaOf(B) ~> #eq2(M1, A, B) ...</k>
+  rule <k> M2:Val ~> #eq2(M1, A, B) => #tmFrom(M1, "__eq") ~> #eq3(M1, M2, A, B) ...</k>
+  rule <k> nil ~> #eq3(_, _, _, _) => false ...</k>
+  rule <k> H:Val ~> #eq3(M, M, A, B) => #callBool(H, A, B) ...</k> requires H =/=K nil
+  rule <k> H:Val ~> #eq3(M1, M2, A, B) => #tmFrom(M2, "__eq") ~> #eq4(H, A, B) ...</k>
+    requires H =/=K nil andBool M1 =/=K M2
+  rule <k> H2:Val ~> #eq4(H, A, B) => #callBool(H, A, B) ...</k> requires H2 =/=K nil andBool #rawEq(H, H2)
+  rule <k> H2:Val ~> #eq4(H, _, _) => false ...</k> requires H2 ==K nil orBool notBool #rawEq(H, H2)
+  // A metamethod's first result, as a boolean.
+  rule <k> #callBool(H, A, B) => #apply(H, ListItem(A) ListItem(B)) ~> #first ~> #not ~> #not ...</k>
   rule <k> #bin("<",  A:Float, B:Float)   => A <Float B ...</k>
   rule <k> #bin("<",  A:String, B:String) => A <String B ...</k>
   rule <k> #bin("<=", A:Float, B:Float)   => A <=Float B ...</k>
   rule <k> #bin("<=", A:String, B:String) => A <String B orBool A ==String B ...</k>
   rule <k> #bin(">",  A:Val, B:Val) => #bin("<",  B, A) ...</k>
   rule <k> #bin(">=", A:Val, B:Val) => #bin("<=", B, A) ...</k>
+  // Other operands of the same type: call_orderTM needs the same __lt
+  // (or __le) metamethod in both; `a <= b` falls back to `not (b < a)`.
+  // Operands of different types are always an error (luaV_lessthan).
   rule <k> #bin(Op, A:Val, B:Val) => #compareError(A, B) ...</k>
-    requires (Op ==String "<" orBool Op ==String "<=")
-     andBool notBool (#isNumOrStr(A) andBool #type(A) ==String #type(B))
+    requires (Op ==String "<" orBool Op ==String "<=") andBool #type(A) =/=String #type(B)
+  rule <k> #bin("<", A:Val, B:Val) => #orderTM(A, B, "__lt", #compareError(A, B)) ...</k>
+    requires #type(A) ==String #type(B) andBool notBool #isNumOrStr(A)
+  rule <k> #bin("<=", A:Val, B:Val) => #orderTM(A, B, "__le", #orderTM(B, A, "__lt", #compareError(A, B)) ~> #not) ...</k>
+    requires #type(A) ==String #type(B) andBool notBool #isNumOrStr(A)
+
+  syntax KItem ::= #orderTM(Val, Val, String, K) | #orderTM2(Val, Val, String, K) | #orderTM3(Val, Val, Val, K)
+  rule <k> #orderTM(A, B, E, Else) => #getTM(A, E) ~> #orderTM2(A, B, E, Else) ...</k>
+  rule <k> nil ~> #orderTM2(_, _, _, Else) => Else ...</k>
+  rule <k> H:Val ~> #orderTM2(A, B, E, Else) => #getTM(B, E) ~> #orderTM3(H, A, B, Else) ...</k> requires H =/=K nil
+  rule <k> H2:Val ~> #orderTM3(H, A, B, _) => #callBool(H, A, B) ...</k>
+    requires #rawEq(H, H2)
+  rule <k> H2:Val ~> #orderTM3(H, _, _, Else) => Else ...</k> requires notBool #rawEq(H, H2)
 
   syntax Bool ::= #isNumOrStr(Val) [function, total]
   rule #isNumOrStr(_:Float)  => true
@@ -124,10 +174,12 @@ module LUA-EVAL
   // ------------------------------------------------------ concatenation
   rule <k> #bin("..", A:Val, B:Val) => {#tostringCoerce(A)}:>String +String {#tostringCoerce(B)}:>String ...</k>
     requires #tostringCoerce(A) =/=K nil andBool #tostringCoerce(B) =/=K nil
-  rule <k> #bin("..", A:Val, _:Val) => #error("attempt to concatenate a " +String #type(A) +String " value") ...</k>
-    requires #tostringCoerce(A) ==K nil
-  rule <k> #bin("..", A:Val, B:Val) => #error("attempt to concatenate a " +String #type(B) +String " value") ...</k>
-    requires #tostringCoerce(A) =/=K nil andBool #tostringCoerce(B) ==K nil
+  // Otherwise __concat (call_binTM); without one Lua blames the first
+  // operand that is not a string or number.
+  rule <k> #bin("..", A:Val, B:Val)
+        => #binTM("__concat", A, B, #error("attempt to concatenate a "
+             +String #type(#if #tostringCoerce(A) ==K nil #then A #else B #fi) +String " value")) ...</k>
+    requires #tostringCoerce(A) ==K nil orBool #tostringCoerce(B) ==K nil
 
   // ------------------------------------------------------ not, #, and, or
   rule <k> #un("not", A:Val) => notBool #truthy(A) ...</k>
@@ -145,13 +197,13 @@ module LUA-EVAL
   // ======================================================= calls
 
   // In an expression a call gives its first result (or nil).
-  syntax KItem ::= #call(K) | "#first" | "#discard"
+  syntax KItem ::= #call(K)
   rule <k> F:FunctionCall => #call(F) ~> #first ...</k>
   rule <k> #vals(L) ~> #first => #head(L) ...</k>
   rule <k> #vals(_) ~> #discard => .K ...</k>
 
   syntax KItem ::= #callArgs(Args) | #methodArgs(String, Args) | #methodFn(Val, Args)
-                 | #applyTo(Val) | #prepend(Val) | #apply(Val, List)
+                 | #applyTo(Val) | #prepend(Val)
   rule <k> #call(P:NPrefix A:Args) => P ~> #callArgs(A) ...</k>
   rule <k> #call(P:PPrefix A:Args) => P ~> #callArgs(A) ...</k>
   rule <k> #call(P:NPrefix : N:Name A:Args) => P ~> #methodArgs(Name2String(N), A) ...</k>
@@ -165,9 +217,15 @@ module LUA-EVAL
   rule <k> #vals(L) ~> #applyTo(F) => #apply(F, L) ...</k>
 
   // Library functions are defined in LUA-STDLIB, Lua functions in
-  // LUA-FUNCTION. (Not [owise]: library rules use owise among themselves.)
-  rule <k> #apply(F, _) => #error("attempt to call a " +String #type(F) +String " value") ...</k>
+  // LUA-FUNCTION. Calling anything else uses its __call metamethod, which
+  // gets the called value as an extra first argument (tryfuncTM). (Not
+  // [owise]: library rules use owise among themselves.)
+  syntax KItem ::= #callTM(Val, List)
+  rule <k> #apply(F, Args) => #getTM(F, "__call") ~> #callTM(F, Args) ...</k>
     requires #type(F) =/=String "function"
+  rule <k> H:Val ~> #callTM(F, Args) => #apply(H, ListItem(F) Args) ...</k> requires #type(H) ==String "function"
+  rule <k> H:Val ~> #callTM(F, _) => #error("attempt to call a " +String #type(F) +String " value") ...</k>
+    requires #type(H) =/=String "function"
 
   syntax KItem ::= #args(Args)
   rule <k> #args(( Es:Exps ):Args) => #evalList(#exps2list(Es)) ...</k>
@@ -285,8 +343,8 @@ module LUA-EVAL
   rule <k> #storeOne(#lvName(X), V) => .K ...</k>
        <env> ... X |-> L ... </env>
        <store> S => S [ L <- V ] </store>
-  rule <k> #storeOne(#lvName(X), V) => #setIndex(G, Name2String(X), V) ...</k>
-       <env> Env </env> <fenv> G </fenv>
+  rule <k> #storeOne(#lvName(X), V) => #genv ~> #setIndexK(Name2String(X), V) ...</k>
+       <env> Env </env>
     requires notBool X in_keys(Env)
   rule <k> #storeOne(#lvIdx(T, K), V) => #setIndex(T, K, V) ...</k>
 

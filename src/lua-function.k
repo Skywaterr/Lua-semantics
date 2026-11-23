@@ -6,21 +6,21 @@
 // Locals live in <store> locations, and a closure captures the Name |-> Loc
 // map of its definition site, so upvalues are shared locations.
 //
-// A call leaves #returnTarget(caller env, varargs, fenv, nextLoc, epoch)
-// behind the body; `return` drops <k> up to it and restores the caller.
+// A call pushes #frame(function, tail calls) on <callStack> and leaves
+// #returnTarget(caller env, varargs, nextLoc, epoch) behind the body;
+// `return` drops <k> up to it, restores the caller and pops the frame.
 
 requires "lua-eval.k"
 
 module LUA-FUNCTION
   imports LUA-EVAL
 
-  syntax FunInfo ::= #fun(List, Bool, Bool, Block, Map, Val)
-
   // =================================================== creating closures
 
   // Creating a closure moves <epoch>: from now on the locals it captured
   // may outlive their block, so no enclosing block may free them.
   syntax KItem ::= #mkClosure(FuncBody) | #mkMethod(FuncBody) | #newClosure(List, Bool, Block)
+                 | #newClosureE(List, Bool, Block)
   // `()` is the empty Params list, so one rule covers every parameter list.
   rule <k> function FB:FuncBody => #mkClosure(FB) ...</k>
   rule <k> #mkClosure(( PL:ParList ) B:Block end) => #newClosure(#parNames(PL), #parVararg(PL), B) ...</k>
@@ -29,11 +29,13 @@ module LUA-FUNCTION
         => #newClosure(ListItem(String2Name("self")) #parNames(PL), #parVararg(PL), B) ...</k>
 
   // A vararg function also gets the Lua 5.0-style local `arg` table
-  // (LUA_COMPAT_VARARG, on in 5.1.5's default build).
-  rule <k> #newClosure(Ps, IsVA, B) => closure(I) ...</k>
+  // (LUA_COMPAT_VARARG, on in 5.1.5's default build). A new closure gets
+  // the environment of the function that creates it.
+  rule <k> #newClosure(Ps, IsVA, B) => #genv ~> #newClosureE(Ps, IsVA, B) ...</k>
+  rule <k> FE:Val ~> #newClosureE(Ps, IsVA, B) => closure(I) ...</k>
        <funcs> Fs => Fs [ I <- #fun(Ps, IsVA, IsVA, B, Env, FE) ] </funcs>
        <nextFn> I => I +Int 1 </nextFn>
-       <env> Env </env> <fenv> FE </fenv>
+       <env> Env </env>
        <epoch> Ep => Ep +Int 1 </epoch>
 
   syntax Name ::= String2Name(String) [function, total, hook(STRING.string2token)]
@@ -75,19 +77,20 @@ module LUA-FUNCTION
 
   // ======================================================= calling
 
-  syntax KItem ::= #enter(FunInfo, List)
+  syntax KItem ::= #enter(Int, FunInfo, List, Int)
                  | #bindParams(List, List) | #argTable(Bool, List) | #bindVal(Name)
-                 | "#return" | #returnTarget(Map, List, Val, Int, Int)
-                 | #popFrame(Map, List, Val, Int, Int)
-  rule <k> #apply(closure(I), Args) => #enter(F, Args) ...</k>
+                 | "#return" | #returnTarget(Map, List, Int, Int)
+                 | #popFrame(Map, List, Int, Int)
+  rule <k> #apply(closure(I), Args) => #enter(I, F, Args, 0) ...</k>
        <funcs> ... I |-> F:FunInfo ... </funcs>
-  rule <k> #enter(#fun(Ps, IsVA, NA, B, CEnv, CFE), Args)
+  // #enter(closure id, its data, arguments, tail calls this frame replaced)
+  rule <k> #enter(I, #fun(Ps, IsVA, NA, B, CEnv, _), Args, Tails)
         => #bindParams(Ps, Args) ~> #argTable(NA, #drop(size(Ps), Args))
            ~> #run(B) ~> #vals(.List) ~> #return
-           ~> #returnTarget(Env, VA, FE, NL, Ep) ...</k>
+           ~> #returnTarget(Env, VA, NL, Ep) ...</k>
        <env> Env => CEnv </env>
        <varargs> VA => #varargsOf(IsVA, #drop(size(Ps), Args)) </varargs>
-       <fenv> FE => CFE </fenv>
+       <callStack> Stack => ListItem(#frame(closure(I), Tails)) Stack </callStack>
        <nextLoc> NL </nextLoc> <epoch> Ep </epoch>
 
   // Missing arguments are nil, extra ones are dropped (or become `...`).
@@ -116,29 +119,41 @@ module LUA-FUNCTION
   // A body that runs off its end returns no values.
   rule <k> #last(return Es:Exps ;) => #last(return Es) ...</k>
   rule <k> #last(return Es:Exps) => #evalList(#exps2list(Es)) ~> #return ...</k>
-  rule <k> #vals(L) ~> #return ~> #returnTarget(Env, VA, FE, NL, Ep) => #popFrame(Env, VA, FE, NL, Ep) ~> #vals(L) ...</k>
+  rule <k> #vals(L) ~> #return ~> #returnTarget(Env, VA, NL, Ep) => #popFrame(Env, VA, NL, Ep) ~> #vals(L) ...</k>
   rule <k> #vals(_) ~> #return ~> (_:KItem => .K) ...</k> [owise]
 
   // Leaving a frame frees its locations, as #restoreEnv does for blocks.
-  rule <k> #popFrame(Env, VA, FE, NL, Ep) => .K ...</k>
-       <env> _ => Env </env> <varargs> _ => VA </varargs> <fenv> _ => FE </fenv>
+  rule <k> #popFrame(Env, VA, NL, Ep) => .K ...</k>
+       <env> _ => Env </env> <varargs> _ => VA </varargs>
+       <callStack> ListItem(_) Stack => Stack </callStack>
        <epoch> Ep </epoch>
        <nextLoc> Cur => NL </nextLoc> <store> S => #free(S, NL, Cur) </store>
-  rule <k> #popFrame(Env, VA, FE, _, _) => .K ...</k>
-       <env> _ => Env </env> <varargs> _ => VA </varargs> <fenv> _ => FE </fenv>
+  rule <k> #popFrame(Env, VA, _, _) => .K ...</k>
+       <env> _ => Env </env> <varargs> _ => VA </varargs>
+       <callStack> ListItem(_) Stack => Stack </callStack>
     [owise]
 
   // Tail call: `return f(args)` (not parenthesised) evaluates f and its
   // arguments, drops the current frame, then calls f in its place, so tail
-  // recursion runs in constant space.
-  syntax KItem ::= "#tailMark" | #tailApply(Val)
+  // recursion runs in constant space. The new frame counts the tail calls
+  // it stands for (debug levels and getfenv see them as lost frames).
+  syntax KItem ::= "#tailMark" | #tailApply(Val) | #applyTail(Val, List, Int)
   // (FunctionCall is not a subsort of Exp: it is the union of the name-led
   // and paren-led call sorts, hence the #isCall test.)
   rule <k> #last(return E:Exp , .Exps) => #call(E) ~> #tailMark ...</k>
     requires #isCall(E) [priority(45)]
   rule <k> #vals(L) ~> #applyTo(F) ~> #tailMark => #vals(L) ~> #tailApply(F) ...</k> [priority(45)]
-  rule <k> #vals(L) ~> #tailApply(F) ~> #returnTarget(Env, VA, FE, NL, Ep)
-        => #popFrame(Env, VA, FE, NL, Ep) ~> #apply(F, L) ...</k>
+  // Only a Lua function replaces the frame: a library function called in
+  // tail position runs inside the caller's frame, as OP_TAILCALL does it
+  // (luaD_precall runs C functions right away), and then the caller returns.
+  rule <k> #vals(L) ~> #tailApply(F) => #apply(F, L) ~> #return ...</k>
+    requires #type(F) ==String "function" andBool notBool isClosureVal(F) [priority(45)]
+  rule <k> #vals(L) ~> #tailApply(F) ~> #returnTarget(Env, VA, NL, Ep)
+        => #popFrame(Env, VA, NL, Ep) ~> #applyTail(F, L, T +Int 1) ...</k>
+       <callStack> ListItem(#frame(_, T)) ... </callStack>
+  rule <k> #applyTail(closure(I), L, T) => #enter(I, F, L, T) ...</k>
+       <funcs> ... I |-> F:FunInfo ... </funcs>
+  rule <k> #applyTail(F, L, _) => #apply(F, L) ...</k> requires notBool isClosureVal(F)
   rule <k> #vals(_) ~> #tailApply(_) ~> (_:KItem => .K) ...</k> [owise]
 
   // ======================================================= the main chunk
@@ -148,7 +163,7 @@ module LUA-FUNCTION
   rule <k> #chunk(B) => closure(I) ~> #callMain ...</k>
        <funcs> Fs => Fs [ I <- #fun(.List, true, false, B, .Map, FE) ] </funcs>
        <nextFn> I => I +Int 1 </nextFn>
-       <fenv> FE </fenv>
+       <threadEnv> FE </threadEnv>
   rule <k> F:Val ~> #callMain => #apply(F, .List) ~> #discard ...</k>
 
   // ======================================================= varargs
@@ -173,4 +188,8 @@ module LUA-FUNCTION
         => #vals(R) ~> #bindAll(Xs) ~> #run(B) ~> #restoreEnv(Env, NL, Ep) ~> #forIn(Xs, B, F, S, #head(R)) ...</k>
        <env> Env </env> <nextLoc> NL </nextLoc> <epoch> Ep </epoch>
     requires #head(R) =/=K nil
+
+  syntax Bool ::= isClosureVal(Val) [function, total]
+  rule isClosureVal(closure(_)) => true
+  rule isClosureVal(_) => false [owise]
 endmodule
