@@ -26,15 +26,13 @@ end
 -- run and time it
 function test(s,f)
 	N=0
-	local c=os.clock()
 	local v=f(n)
-	local t=os.clock()-c
-	print(s,n,v,t,N)
+	print(s,n,v,N)
 end
 
 n=arg[1] or 24		-- for other values, do lua fib.lua XX
 n=tonumber(n)
-print("","n","value","time","evals")
+print("","n","value","evals")
 test("plain",fib)
 fib=cache(fib)
 test("cached",fib)
