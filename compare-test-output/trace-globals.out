@@ -1,0 +1,10 @@
+tests/trace-globals.lua:32: a is now 1 (was nil)
+tests/trace-globals.lua:33: b is now 2 (was nil)
+tests/trace-globals.lua:34: a is now 10 (was 1)
+tests/trace-globals.lua:35: b is now 20 (was 2)
+tests/trace-globals.lua:36: b is now nil (was 20)
+tests/trace-globals.lua:37: b is now 200 (was nil)
+10	200	nil
+
+
+Added a line here to make the compare script fail this file
