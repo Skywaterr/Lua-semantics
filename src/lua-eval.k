@@ -132,7 +132,7 @@ module LUA-EVAL
   // ------------------------------------------------------ not, #, and, or
   rule <k> #un("not", A:Val) => notBool #truthy(A) ...</k>
   rule <k> #un("#", S:String) => Int2Float(lengthString(S), 53, 11) ...</k>
-  rule <k> #un("#", tref(T)) => #border(M) ...</k> <tables> ... T |-> M:Map ... </tables>
+  rule <k> #un("#", tref(T)) => #lenF(M, A) ...</k> <tables> ... T |-> #tbl(M, A, _) ... </tables>
   rule <k> #un("#", V:Val) => #error("attempt to get length of a " +String #type(V) +String " value") ...</k>
     [owise]
 

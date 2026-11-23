@@ -1,26 +1,39 @@
 // The standard library: the initial global table and library functions.
-// So far: print, io.write, tostring, tonumber, type, select, unpack and
-// _VERSION; the rest arrives with later milestones (see ROADMAP.md).
+// The base library so far (print, io.write, tostring, tonumber, type,
+// select, unpack, _VERSION) and the initial global table; table and math
+// live in lua-table.k and lua-math.k. The rest arrives with later
+// milestones (see ROADMAP.md).
 
-requires "lua-function.k"
+requires "lua-math.k"
 
 module LUA-STDLIB
-  imports LUA-FUNCTION
+  imports LUA-MATH
 
-  // Table 0 is _G, table 1 is io.
+  // Tables 0-4: _G, io, table, math, and arg, which holds the interpreter
+  // name at -1 and the script name at 0, as lua.c sets it up.
   rule <k> #init => .K ...</k>
-       <tables> _ => 0 |-> #globals
-                     1 |-> ("write" |-> builtin("io.write"))
+       <args> Script </args>
+       <tables> _ => 0 |-> #tbl(#globals, 0, nil)
+                     1 |-> #tbl("write" |-> builtin("io.write"), 0, nil)
+                     2 |-> #tbl(#tableLib, 0, nil)
+                     3 |-> #tbl(#mathLib, 0, nil)
+                     4 |-> #tbl((-1.0 |-> "lua" 0.0 |-> Script), 0, nil)
        </tables>
-       <nextTable> _ => 2 </nextTable>
+       <nextTable> _ => 5 </nextTable>
 
   syntax Map ::= "#globals" [function, total]
   rule #globals =>
          "_G"       |-> tref(0)
          "_VERSION" |-> "Lua 5.1"
+         "arg"      |-> tref(4)
          "io"       |-> tref(1)
+         "ipairs"   |-> builtin("ipairs")
+         "math"     |-> tref(3)
+         "next"     |-> builtin("next")
+         "pairs"    |-> builtin("pairs")
          "print"    |-> builtin("print")
          "select"   |-> builtin("select")
+         "table"    |-> tref(2)
          "tonumber" |-> builtin("tonumber")
          "tostring" |-> builtin("tostring")
          "type"     |-> builtin("type")
@@ -90,23 +103,18 @@ module LUA-STDLIB
   rule #selectIndex(I, N) => N requires I >Int N
   rule #selectIndex(I, _) => I [owise]
 
-  // C's (int) cast: truncation towards zero.
-  syntax Int ::= #truncInt(Float) [function, total]
-  rule #truncInt(F) => Float2Int(truncFloat(F)) requires notBool isNaN(F) andBool notBool isInfinite(F)
-  rule #truncInt(_) => 0 [owise]
-
   // -------------------------------------------------------------- unpack
   // unpack(t [, i [, j]]) returns t[i], ..., t[j]; i defaults to 1, j to #t.
-  syntax KItem ::= #unpack(Map, Val, Val)
+  syntax KItem ::= #unpack(Map, Int, Val, Val)
   rule <k> #apply(builtin("unpack"), ListItem(tref(T)) Rest)
-        => #unpack(M, #head(Rest), #head(#tail(Rest))) ...</k>
-       <tables> ... T |-> M:Map ... </tables>
+        => #unpack(M, A, #head(Rest), #head(#tail(Rest))) ...</k>
+       <tables> ... T |-> #tbl(M, A, _) ... </tables>
   rule <k> #apply(builtin("unpack"), ListItem(V:Val) _)
         => #error("bad argument #1 to 'unpack' (table expected, got " +String #type(V) +String ")") ...</k>
     requires notBool isTRef(V)
-  rule <k> #unpack(M, nil, J) => #unpack(M, 1.0, J) ...</k>
-  rule <k> #unpack(M, I:Float, nil) => #unpack(M, I, #border(M)) ...</k>
-  rule <k> #unpack(M, I:Float, J:Float) => #vals(#range(M, #truncInt(I), #truncInt(J))) ...</k>
+  rule <k> #unpack(M, A, nil, J) => #unpack(M, A, 1.0, J) ...</k>
+  rule <k> #unpack(M, A, I:Float, nil) => #unpack(M, A, I, #lenF(M, A)) ...</k>
+  rule <k> #unpack(M, _, I:Float, J:Float) => #vals(#range(M, #truncInt(I), #truncInt(J))) ...</k>
 
   syntax List ::= #range(Map, Int, Int) [function, total]
   rule #range(M, I, J) => ListItem(#rawget(M, Int2Float(I, 53, 11))) #range(M, I +Int 1, J) requires I <=Int J

@@ -53,6 +53,11 @@ module LUA-VALUES
   rule #tail(ListItem(_) L) => L
   rule #tail(.List) => .List
 
+  // C's (int) cast: truncation towards zero.
+  syntax Int ::= #truncInt(Float) [function, total]
+  rule #truncInt(F) => Float2Int(truncFloat(F)) requires notBool isNaN(F) andBool notBool isInfinite(F)
+  rule #truncInt(_) => 0 [owise]
+
   syntax Bool ::= #isCall(K) [function, total]
   rule #isCall(_:FunctionCall) => true
   rule #isCall(_) => false [owise]

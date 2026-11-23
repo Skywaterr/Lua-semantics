@@ -15,7 +15,9 @@ module LUA-CONFIG
   // <funcs>   Id |-> #fun(...) for every closure created (see LUA-FUNCTION)
   // <epoch>   bumped whenever a local may outlive its block (closure
   //           creation, coroutine switches); see #restoreEnv in LUA-EVAL
-  // <tables>  Id |-> Map of fields (Val |-> Val, no nil values)
+  // <tables>  Id |-> #tbl(fields, array size, metatable); fields is a
+  //           Val |-> Val map without nil values
+  // <rand>    glibc random() state for math.random (empty until first use)
   // <args>    the script name, which becomes arg[0] (M4)
   // krun exits with <exit-code>: 1 until <k> empties, so a stuck run or an
   // error fails.
@@ -31,6 +33,7 @@ module LUA-CONFIG
       <tables> .Map </tables>
       <nextTable> 0 </nextTable>
       <funcs> .Map </funcs>
+      <rand> .List </rand>
       <nextFn> 0 </nextFn>
       <args> $ARGS:String </args>
       <output stream="stdout"> .List </output>
@@ -84,9 +87,13 @@ module LUA-CONFIG
   rule #isNaNVal(F:Float) => isNaN(F)
   rule #isNaNVal(_) => false [owise]
 
+  // A table: its fields, the size Lua 5.1 would give its array part (only
+  // a constructor sets it; see #border), and its metatable (M6).
+  syntax TableData ::= #tbl(Map, Int, Val)
+
   // t[k] and t[k] = v without metamethods (those come in M6).
-  syntax KItem ::= #index(Val, Val) | #setIndex(Val, Val, Val) | #newTable(Map)
-  rule <k> #index(tref(T), K) => #rawget(M, K) ...</k> <tables> ... T |-> M:Map ... </tables>
+  syntax KItem ::= #index(Val, Val) | #setIndex(Val, Val, Val) | #newTable(Map) | #newTableN(Map, Int)
+  rule <k> #index(tref(T), K) => #rawget(M, K) ...</k> <tables> ... T |-> #tbl(M, _, _) ... </tables>
   rule <k> #index(V, _) => #error("attempt to index a " +String #type(V) +String " value") ...</k>
     [owise]
 
@@ -94,22 +101,31 @@ module LUA-CONFIG
   rule <k> #setIndex(tref(_), K, _) => #error("table index is NaN") ...</k>
     requires #isNaNVal(K)
   rule <k> #setIndex(tref(T), K, V) => .K ...</k>
-       <tables> ... T |-> (M:Map => #rawset(M, K, V)) ... </tables>
+       <tables> ... T |-> #tbl((M => #rawset(M, K, V)), _, _) ... </tables>
     requires K =/=K nil andBool notBool #isNaNVal(K)
   rule <k> #setIndex(V, _, _) => #error("attempt to index a " +String #type(V) +String " value") ...</k>
     [owise]
 
-  rule <k> #newTable(M) => tref(N) ...</k>
-       <tables> Ts => Ts [ N <- M ] </tables>
+  rule <k> #newTable(M) => #newTableN(M, 0) ...</k>
+  rule <k> #newTableN(M, A) => tref(N) ...</k>
+       <tables> Ts => Ts [ N <- #tbl(M, A, nil) ] </tables>
        <nextTable> N => N +Int 1 </nextTable>
 
-  // Length of a table: a border, found like Lua's unbound_search (hash part):
-  // double j while t[j] ~= nil, then binary search. For sequences this is n.
-  syntax Float ::= #border(Map) [function, total]
-  syntax Int ::= #unbound(Map, Int, Int) [function, total]
+  // Length of a table: a border, found as ltable.c luaH_getn does. With an
+  // array part of size A whose last slot is nil, binary search inside it;
+  // otherwise unbound_search from A: double j while t[j] ~= nil, then binary
+  // search. Only constructors size the array part here (Lua's rehash, which
+  // can resize it on insertion, is not modelled), so tables with holes may
+  // get a different border than in lua; for sequences it is always n.
+  syntax Int ::= #border(Map, Int) [function, total]
+               | #unbound(Map, Int, Int) [function, total]
                | #binsearch(Map, Int, Int) [function, total]
-  rule #border(M) => Int2Float(#unbound(M, 1, 2), 53, 11) requires #rawget(M, 1.0) =/=K nil
-  rule #border(_) => 0.0 [owise]
+  rule #border(M, A) => #binsearch(M, 0, A)
+    requires A >Int 0 andBool #rawget(M, Int2Float(A, 53, 11)) ==K nil
+  rule #border(M, A) => #unbound(M, A, A +Int 1) [owise]
+
+  syntax Float ::= #lenF(Map, Int) [function, total]
+  rule #lenF(M, A) => Int2Float(#border(M, A), 53, 11)
   rule #unbound(M, _, J) => #unbound(M, J, J *Int 2) requires #rawget(M, Int2Float(J, 53, 11)) =/=K nil
   rule #unbound(M, I, J) => #binsearch(M, I, J) [owise]
   rule #binsearch(M, I, J) => #binsearch(M, I, (I +Int J) /Int 2)

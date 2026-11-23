@@ -8,6 +8,8 @@
 //   lua-config.k   LUA-CONFIG   the configuration; tables, locals, output, errors
 //   lua-eval.k     LUA-EVAL     expressions and statements
 //   lua-function.k LUA-FUNCTION closures, calls, returns, varargs, generic for
+//   lua-table.k    LUA-TABLE    constructors, next/pairs/ipairs, table library
+//   lua-math.k     LUA-MATH     math library
 //   lua-stdlib.k   LUA-STDLIB   the global table and library functions
 
 requires "lua-stdlib.k"
