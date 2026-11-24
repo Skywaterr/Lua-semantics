@@ -28,6 +28,9 @@ module LUA-CONFIG
   //           Val |-> Val map without nil values
   // <rand>    glibc random() state for math.random (empty until first use)
   // <iters>   Id |-> state of each string.gmatch iterator
+  // <coroutines> Id |-> #co(status, saved continuation, env, varargs,
+  //           call stack) for every coroutine (see LUA-COROUTINE)
+  // <curCo>   the running coroutine, -1 for the main thread
   // <args>    the script name, which becomes arg[0] (M4)
   // krun exits with <exit-code>: 1 until <k> empties, so a stuck run or an
   // error fails.
@@ -47,6 +50,9 @@ module LUA-CONFIG
       <funcs> .Map </funcs>
       <rand> .List </rand>
       <iters> .Map </iters>
+      <coroutines> .Map </coroutines>
+      <curCo> -1 </curCo>
+      <nextCo> 0 </nextCo>
       <nextFn> 0 </nextFn>
       <args> $ARGS:String </args>
       <output stream="stdout"> .List </output>
@@ -74,6 +80,14 @@ module LUA-CONFIG
   //                  its caller (luaL_where(L, 1))
   syntax KItem ::= #error(String) | #rtError(String) | #throw(Val) | #halted(Val)
                  | #catch(Map, List, List, Val) | #caught(Val, Val) | "#xpres"
+                 // the end of a resumed coroutine's continuation: its id, and
+                 // the resumer's coroutine, env, varargs and call stack
+                 | #coBoundary(Int, Int, Map, List, List)
+                 // after a call that is a C boundary for yields (metamethods,
+                 // generic-for iterators: luaD_call in 5.1)
+                 | "#mmMark"
+  rule <k> #vals(R) ~> #mmMark => #vals(R) ...</k>
+  rule <k> V:Val ~> #mmMark => V ...</k>
   rule <k> #rtError(M) => #throw(#where(#level(S, 0), Src) +String M) ...</k>
        <callStack> S </callStack> <args> Src </args>
   rule <k> #error(M) => #throw(#where(#level(S, 1), Src) +String M) ...</k>
@@ -93,6 +107,7 @@ module LUA-CONFIG
 
   syntax Bool ::= isCatchItem(KItem) [function, total]
   rule isCatchItem(#catch(_, _, _, _)) => true
+  rule isCatchItem(#coBoundary(_, _, _, _, _)) => true
   rule isCatchItem(_) => false [owise]
 
   syntax String ::= #errMsg(Val) [function, total]
@@ -235,7 +250,7 @@ module LUA-CONFIG
   rule <k> nil ~> #gtRaw(T, K, C) => #getTM(T, "__index") ~> #gtTM(T, K, C, true) ...</k>
   rule <k> nil ~> #gtTM(_, _, _, true) => nil ...</k>
   rule <k> nil ~> #gtTM(V, _, _, false) => #rtError("attempt to index a " +String #type(V) +String " value") ...</k>
-  rule <k> H:Val ~> #gtTM(V, K, _, _) => #apply(H, ListItem(V) ListItem(K)) ~> #first ...</k>
+  rule <k> H:Val ~> #gtTM(V, K, _, _) => #apply(H, ListItem(V) ListItem(K)) ~> #mmMark ~> #first ...</k>
     requires #type(H) ==String "function"
   rule <k> H:Val ~> #gtTM(_, K, C, _) => #gettable(H, K, C +Int 1) ...</k>
     requires H =/=K nil andBool #type(H) =/=String "function"
@@ -258,7 +273,7 @@ module LUA-CONFIG
     requires C <Int 100 andBool notBool isTRef(T)
   rule <k> nil ~> #stTM(tref(T), K, V, _, true) => #rawsetT(T, K, V) ...</k>
   rule <k> nil ~> #stTM(T, _, _, _, false) => #rtError("attempt to index a " +String #type(T) +String " value") ...</k>
-  rule <k> H:Val ~> #stTM(T, K, V, _, _) => #apply(H, ListItem(T) ListItem(K) ListItem(V)) ~> #discard ...</k>
+  rule <k> H:Val ~> #stTM(T, K, V, _, _) => #apply(H, ListItem(T) ListItem(K) ListItem(V)) ~> #mmMark ~> #discard ...</k>
     requires #type(H) ==String "function"
   rule <k> H:Val ~> #stTM(_, K, V, C, _) => #settable(H, K, V, C +Int 1) ...</k>
     requires H =/=K nil andBool #type(H) =/=String "function"

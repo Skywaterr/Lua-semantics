@@ -75,6 +75,7 @@ module LUA-TABLE
   rule #keyRank(_:Bool)   => 2
   rule #keyRank(_:TRef)   => 3
   rule #keyRank(_:Fn)     => 4
+  rule #keyRank(_:Thread) => 5
   rule #keyRank(_)        => 5 [owise]
 
   syntax Bool ::= #keyLt(Val, Val) [function, total]
@@ -86,6 +87,7 @@ module LUA-TABLE
   rule #keyLt(builtin(X), builtin(Y)) => X <String Y
   rule #keyLt(builtin(_), closure(_)) => true
   rule #keyLt(closure(I), closure(J)) => I <Int J
+  rule #keyLt(thread(I), thread(J)) => I <Int J
   rule #keyLt(_, _) => false [owise]
 
   // Smallest key after `After` (nil: the first key); nil if none.

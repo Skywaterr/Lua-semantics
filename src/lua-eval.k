@@ -139,9 +139,9 @@ module LUA-EVAL
   syntax KItem ::= #binTM(String, Val, Val, K) | #binTM2(String, Val, Val, K) | #binTMCall(Val, Val, K)
   rule <k> #binTM(E, A, B, Err) => #getTM(A, E) ~> #binTM2(E, A, B, Err) ...</k>
   rule <k> nil ~> #binTM2(E, A, B, Err) => #getTM(B, E) ~> #binTMCall(A, B, Err) ...</k>
-  rule <k> H:Val ~> #binTM2(_, A, B, _) => #apply(H, ListItem(A) ListItem(B)) ~> #first ...</k> requires H =/=K nil
+  rule <k> H:Val ~> #binTM2(_, A, B, _) => #apply(H, ListItem(A) ListItem(B)) ~> #mmMark ~> #first ...</k> requires H =/=K nil
   rule <k> nil ~> #binTMCall(_, _, Err) => Err ...</k>
-  rule <k> H:Val ~> #binTMCall(A, B, _) => #apply(H, ListItem(A) ListItem(B)) ~> #first ...</k> requires H =/=K nil
+  rule <k> H:Val ~> #binTMCall(A, B, _) => #apply(H, ListItem(A) ListItem(B)) ~> #mmMark ~> #first ...</k> requires H =/=K nil
 
   syntax Float ::= #arithF(String, Float, Float) [function, total]
   rule #arithF("+", X, Y) => X +Float Y
@@ -177,7 +177,7 @@ module LUA-EVAL
   rule <k> H2:Val ~> #eq4(H, A, B) => #callBool(H, A, B) ...</k> requires H2 =/=K nil andBool #rawEq(H, H2)
   rule <k> H2:Val ~> #eq4(H, _, _) => false ...</k> requires H2 ==K nil orBool notBool #rawEq(H, H2)
   // A metamethod's first result, as a boolean.
-  rule <k> #callBool(H, A, B) => #apply(H, ListItem(A) ListItem(B)) ~> #first ~> #not ~> #not ...</k>
+  rule <k> #callBool(H, A, B) => #apply(H, ListItem(A) ListItem(B)) ~> #mmMark ~> #first ~> #not ~> #not ...</k>
   rule <k> #bin("<",  A:Float, B:Float, _, _)   => A <Float B ...</k>
   rule <k> #bin("<",  A:String, B:String, _, _) => A <String B ...</k>
   rule <k> #bin("<=", A:Float, B:Float, _, _)   => A <=Float B ...</k>
@@ -281,6 +281,7 @@ module LUA-EVAL
   syntax Bool ::= #isLibFn(Val) [function, total]
   rule #isLibFn(builtin(_)) => true
   rule #isLibFn(gmatchIter(_)) => true
+  rule #isLibFn(coWrap(_)) => true
   rule #isLibFn(_) => false [owise]
 
   syntax KItem ::= #args(Args)

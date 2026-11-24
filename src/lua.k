@@ -13,6 +13,7 @@
 //   lua-pattern.k  LUA-PATTERN  Lua pattern matching (pure functions)
 //   lua-format.k   LUA-FORMAT   string.format conversions
 //   lua-string.k   LUA-STRING   string library, string methods
+//   lua-coroutine.k LUA-COROUTINE coroutine library (resume/yield)
 //   lua-stdlib.k   LUA-STDLIB   the global table and library functions
 
 requires "lua-stdlib.k"

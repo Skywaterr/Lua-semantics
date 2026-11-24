@@ -189,7 +189,7 @@ module LUA-FUNCTION
        <env> Env </env>
   rule <k> #vals(L) ~> #forInPrep(Xs, B)
         => #forIn(Xs, B, #head(L), #head(#tail(L)), #head(#tail(#tail(L)))) ...</k>
-  rule <k> #forIn(Xs, B, F, S, V) => #applyE(F, ListItem(S) ListItem(V), #forgen) ~> #forInStep(Xs, B, F, S) ...</k>
+  rule <k> #forIn(Xs, B, F, S, V) => #applyE(F, ListItem(S) ListItem(V), #forgen) ~> #mmMark ~> #forInStep(Xs, B, F, S) ...</k>
   rule <k> #vals(R) ~> #forInStep(_, _, _, _) => .K ...</k> requires #head(R) ==K nil
   rule <k> #vals(R) ~> #forInStep(Xs, B, F, S)
         => #vals(R) ~> #bindAll(Xs) ~> #run(B) ~> #restoreEnv(Env, NL, Ep) ~> #forIn(Xs, B, F, S, #head(R)) ...</k>

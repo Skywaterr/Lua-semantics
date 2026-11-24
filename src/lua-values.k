@@ -10,11 +10,13 @@ module LUA-VALUES
   // Every Lua 5.1 number is a double, so numbers are K Floats (53-bit
   // precision, 11 exponent bits). Strings are K Strings whose characters are
   // all in 0..255, one per Lua byte (see scripts/klua).
-  syntax Val  ::= Nil | Bool | Float | String | TRef | Fn
+  syntax Val  ::= Nil | Bool | Float | String | TRef | Fn | Thread
+  syntax Thread ::= thread(Int)          // a coroutine, by id in <coroutines>
   syntax TRef ::= tref(Int)                // a table, by id in <tables>
   syntax Fn   ::= builtin(String)          // a library function, by name
                 | closure(Int)             // a Lua function, by id in <funcs>
                 | gmatchIter(Int)          // a string.gmatch iterator, state in <iters>
+                | coWrap(Int)              // a coroutine.wrap function, for coroutine Id
 
   // Expressions evaluate to values in place.
   syntax Exp     ::= Val
@@ -38,6 +40,7 @@ module LUA-VALUES
   rule #type(_:String) => "string"
   rule #type(_:TRef)   => "table"
   rule #type(_:Fn)     => "function"
+  rule #type(_:Thread) => "thread"
 
   // Raw equality (no metamethods): numbers by value, so 0 == -0 and
   // NaN ~= NaN; everything else by identity or contents.

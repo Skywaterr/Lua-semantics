@@ -1,0 +1,37 @@
+thread	suspended	nil
+start	1	2	running	true
+true	3
+suspended
+got	10
+true	20	two values
+got	x	y
+true	done	99
+dead	false	cannot resume dead coroutine
+sum	5050
+bca cba cab acb bac abc 
+ALPHA BETA GAMMA dead
+kept a/kept b/1/1
+kept a/kept b/2/2
+kept a/kept b/3/3
+false	tests/feature-coroutines.lua:77: attempt to index local 'z' (a nil value)
+dead	false	cannot resume dead coroutine
+1
+false	cannot resume dead coroutine
+false	tests/feature-coroutines.lua:83: in wrap
+false	table	7
+table	8
+inner sees outer	normal
+false	cannot resume normal coroutine
+true	from inner
+inner status	suspended
+true	from outer
+suspended
+false	attempt to yield across metamethod/C-call boundary
+false	attempt to yield across metamethod/C-call boundary
+true
+false	attempt to yield across metamethod/C-call boundary
+false	attempt to yield across metamethod/C-call boundary
+false	bad argument #1 to '?' (Lua function expected)
+false	bad argument #1 to '?' (coroutine expected)
+true	3	nil	2	nil
+true
