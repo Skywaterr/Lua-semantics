@@ -1,0 +1,6 @@
+Printing a number	1
+Printing the addition of two integers	2
+Printing the subtraction of two floats	0.1
+Concatenating 1 and 2	12
+Indices of substring 234567 in the string 1234567890	2	7
+The output of 1 + 2 .. 3 + 4 .. 5 + 6 .. 7 + 8 .. 9 + 0: 3711159

@@ -1,0 +1,50 @@
+Test 1, should print 0 through 10 inclusive
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+Test 2, should print up to 9.99
+0
+3.33
+6.66
+9.99
+Test 3, should NOT print up to 10.02
+0
+3.33
+6.66
+9.99
+Test 4, count down from 10 to 0
+10
+9
+8
+7
+6
+5
+4
+3
+2
+1
+0
+Test 5, shouldn't count at all, no negative step
+Test 6, decimal steps between 0.2-0.8
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+Test 7, count up to 30, breaking at 15, with a step of 3
+0
+3
+6
+9
+12
+15

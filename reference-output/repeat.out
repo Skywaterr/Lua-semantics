@@ -1,0 +1,6 @@
+a = 0, repeating until a == 10
+a = 10
+b = 0, repeatedly add 3 until b > 10
+b = 12
+c = 0, repeating until c < -15
+c = -18
